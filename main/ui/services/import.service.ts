@@ -264,6 +264,20 @@ export class ImportService {
   private isImporting = false;
 
   /**
+   * Log import progress for debugging complex .asm/.psm conversion flows
+   * @param step - Step name
+   * @param details - Optional structured details
+   */
+  private logProgress(step: string, details?: Record<string, unknown>): void {
+    const stamp = new Date().toISOString();
+    if (details) {
+      console.info(`[ImportService][${stamp}] ${step}`, details);
+      return;
+    }
+    console.info(`[ImportService][${stamp}] ${step}`);
+  }
+
+  /**
    * Create a new ImportService instance
    * Dependencies are injected for testability
    */
@@ -675,17 +689,34 @@ export class ImportService {
    * @returns Number of SVG files that produced at least one part
    */
   private async importDuraCliSvgPaths(svgPaths: string[]): Promise<number> {
+    this.logProgress("duraCLI SVG import batch start", { total: svgPaths.length });
     let importedSvgFiles = 0;
 
-    for (const svgPath of svgPaths) {
+    for (let i = 0; i < svgPaths.length; i++) {
+      const svgPath = svgPaths[i];
+      this.logProgress("duraCLI SVG import file start", {
+        index: i + 1,
+        total: svgPaths.length,
+        svgPath,
+      });
       const before = this.getImportedPartCount();
       await this.readSvgFile(svgPath);
       const after = this.getImportedPartCount();
       if (after > before) {
         importedSvgFiles++;
       }
+      this.logProgress("duraCLI SVG import file done", {
+        index: i + 1,
+        total: svgPaths.length,
+        importedPartsDelta: after - before,
+        importedSvgFilesSoFar: importedSvgFiles,
+      });
     }
 
+    this.logProgress("duraCLI SVG import batch done", {
+      importedSvgFiles,
+      total: svgPaths.length,
+    });
     return importedSvgFiles;
   }
 
@@ -912,10 +943,21 @@ export class ImportService {
       "--units",
       units,
     ];
+    this.logProgress("duraCLI conversion start", {
+      filePath,
+      duracliPath,
+      outputDirectory,
+      units,
+    });
     let keepOutput = process.env[DURA_CLI_DEBUG_ENV] === "1";
 
     try {
       const runResult = await this.runDuraCli(duracliPath, args);
+      this.logProgress("duraCLI process completed", {
+        exitCode: runResult.exitCode,
+        stdoutLength: runResult.stdout.length,
+        stderrLength: runResult.stderr.length,
+      });
       const manifest = this.readDuraCliManifest(manifestPath);
       this.writeDuraCliRunLog(
         outputDirectory,
@@ -942,6 +984,16 @@ export class ImportService {
         importedDxfFiles = await this.importDuraCliDxfFallback(dxfPaths);
       }
 
+      this.logProgress("duraCLI conversion import summary", {
+        svgCandidates: svgPaths.length,
+        dxfCandidates: dxfPaths.length,
+        importedSvgFiles,
+        importedDxfFiles,
+        failedPartsCount,
+        warningCount,
+        errorCount,
+      });
+
       const importedFiles = importedSvgFiles + importedDxfFiles;
       if (importedFiles === 0) {
         let issueDetail = "";
@@ -961,6 +1013,10 @@ export class ImportService {
           `duraCLI completed without usable SVG output.${issueDetail}<br>Debug folder: ${outputDirectory}`,
           true
         );
+        this.logProgress("duraCLI conversion ended without importable geometry", {
+          outputDirectory,
+          exitCode: runResult.exitCode,
+        });
         return;
       }
 
@@ -977,6 +1033,11 @@ export class ImportService {
           true
         );
       }
+      this.logProgress("duraCLI conversion done", {
+        importedFiles,
+        keepOutput,
+        outputDirectory,
+      });
     } catch (err) {
       const error = err as Error;
       keepOutput = true;
@@ -991,9 +1052,17 @@ export class ImportService {
         `Could not execute duraCLI conversion: ${error.message}<br>Resolved executable: ${duracliPath}<br>Expected command: ${DURA_CLI_DEFAULT_PATH} ${DURA_CLI_COMMAND} &lt;asmOrPsmPath&gt; --out ... --manifest ... --units mm|inch<br>Set DURA_CLI_PATH or place duraCLI in: ${bundledPath}<br>Debug folder: ${outputDirectory}`,
         true
       );
+      this.logProgress("duraCLI conversion failed to execute", {
+        message: error.message,
+        duracliPath,
+        outputDirectory,
+      });
     } finally {
       if (!keepOutput) {
         this.fs.rmSync(outputDirectory, { recursive: true, force: true });
+        this.logProgress("duraCLI debug folder removed", { outputDirectory });
+      } else {
+        this.logProgress("duraCLI debug folder kept", { outputDirectory });
       }
     }
   }
@@ -1037,10 +1106,12 @@ export class ImportService {
     }
 
     if (this.isImporting) {
+      this.logProgress("showImportDialog skipped (already importing)");
       return;
     }
 
     this.isImporting = true;
+    this.logProgress("showImportDialog opened");
 
     try {
       const result = await this.dialog.showOpenDialog({
@@ -1049,14 +1120,22 @@ export class ImportService {
       });
 
       if (result.canceled) {
+        this.logProgress("showImportDialog canceled by user");
         return;
       }
+
+      this.logProgress("showImportDialog selection", {
+        count: result.filePaths.length,
+        files: result.filePaths,
+      });
 
       for (const filePath of result.filePaths) {
         await this.processFile(filePath);
       }
+      this.logProgress("showImportDialog completed");
     } finally {
       this.isImporting = false;
+      this.logProgress("showImportDialog import flag reset");
     }
   }
 
@@ -1073,6 +1152,7 @@ export class ImportService {
 
     const ext = this.path.extname(filePath);
     const filename = this.path.basename(filePath);
+    this.logProgress("processFile start", { filePath, filename, ext });
 
     if (ext.toLowerCase() === ".svg") {
       await this.readSvgFile(filePath);
@@ -1080,7 +1160,11 @@ export class ImportService {
       await this.convertWithDuraCli(filePath);
     } else if (this.needsConversion(ext)) {
       await this.convertAndImport(filePath, filename, ext);
+    } else {
+      this.logProgress("processFile ignored unsupported extension", { filePath, ext });
     }
+
+    this.logProgress("processFile done", { filePath, ext });
   }
 
   /**
@@ -1093,19 +1177,39 @@ export class ImportService {
       return;
     }
 
+    this.logProgress("readSvgFile start", { filePath });
     return new Promise<void>((resolve) => {
       this.fs!.readFile(filePath, "utf-8", (err, data) => {
-        if (err) {
-          message("An error occurred reading the file: " + err.message, true);
+        try {
+          if (err) {
+            message("An error occurred reading the file: " + err.message, true);
+            this.logProgress("readSvgFile read error", {
+              filePath,
+              message: err.message,
+            });
+            return;
+          }
+
+          const filename = this.path!.basename(filePath);
+          const dirpath = this.path!.dirname(filePath);
+          this.logProgress("readSvgFile read success", {
+            filePath,
+            filename,
+            size: data.length,
+          });
+
+          this.processSvgData(data, filename, dirpath);
+        } catch (e) {
+          const error = e as Error;
+          message(`An error occurred while importing ${filePath}: ${error.message}`, true);
+          this.logProgress("readSvgFile processing error", {
+            filePath,
+            message: error.message,
+          });
+        } finally {
+          this.logProgress("readSvgFile done", { filePath });
           resolve();
-          return;
         }
-
-        const filename = this.path!.basename(filePath);
-        const dirpath = this.path!.dirname(filePath);
-
-        this.processSvgData(data, filename, dirpath);
-        resolve();
       });
     });
   }
@@ -1127,6 +1231,7 @@ export class ImportService {
     }
 
     const url = this.getConversionServerUrl();
+    this.logProgress("convertAndImport start", { filePath, filename, ext, url });
 
     try {
       const fileBuffer = this.fs.readFileSync(filePath);
@@ -1144,6 +1249,11 @@ export class ImportService {
       });
 
       const body = response.data;
+      this.logProgress("convertAndImport response received", {
+        filename,
+        ext,
+        responseLength: body.length,
+      });
 
       // Check for error responses
       if (body.substring(0, 5) === "error") {
@@ -1172,6 +1282,7 @@ export class ImportService {
       // Process the converted SVG
       // Note: dirpath is null for converted files as they won't have embedded images
       this.processSvgData(body, filename, null, scalingFactor, dxfFlag);
+      this.logProgress("convertAndImport done", { filename, ext });
     } catch (err) {
       const error = err as { response?: { data: string }; message: string };
       const errorData = error.response?.data || error.message;
@@ -1192,6 +1303,11 @@ export class ImportService {
           true
         );
       }
+      this.logProgress("convertAndImport failed", {
+        filename,
+        ext,
+        error: JSON.stringify(err),
+      });
     }
   }
 
@@ -1211,6 +1327,13 @@ export class ImportService {
     scalingFactor: number | null = null,
     dxfFlag = false
   ): void {
+    this.logProgress("processSvgData start", {
+      filename,
+      dirpath,
+      scalingFactor,
+      dxfFlag,
+      inputLength: data.length,
+    });
     const useSvgPreProcessor = this.config?.getSync("useSvgPreProcessor");
 
     if (useSvgPreProcessor && this.svgPreProcessor) {
@@ -1220,6 +1343,7 @@ export class ImportService {
 
         if (!svgResult.success) {
           message(svgResult.result, true);
+          this.logProgress("processSvgData preprocessor failed", { filename });
           return;
         }
 
@@ -1227,6 +1351,10 @@ export class ImportService {
       } catch (e) {
         const error = e as Error;
         message("Error processing SVG: " + error.message, true);
+        this.logProgress("processSvgData preprocessor error", {
+          filename,
+          message: error.message,
+        });
       }
     } else {
       this.importData(data, filename, dirpath, scalingFactor, dxfFlag);
@@ -1252,6 +1380,7 @@ export class ImportService {
       message("DeepNest instance not available", true);
       return;
     }
+    const beforeParts = this.deepNest.parts?.length ?? 0;
 
     const importedParts = this.deepNest.importsvg(
       filename,
@@ -1267,6 +1396,13 @@ export class ImportService {
         true
       );
     }
+    const afterParts = this.deepNest.parts?.length ?? beforeParts;
+    this.logProgress("importData result", {
+      filename,
+      importedParts: importedParts?.length ?? 0,
+      partsDelta: afterParts - beforeParts,
+      totalParts: afterParts,
+    });
 
     // Deselect all previous imports
     this.deepNest.imports.forEach((im) => {

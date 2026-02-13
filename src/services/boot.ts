@@ -22,6 +22,8 @@ import {
   touchNests,
   isNesting,
   nestProgress,
+  exportBusy,
+  setAppPhase,
   showMessage,
 } from "../store/index.ts";
 
@@ -39,6 +41,10 @@ declare function require(module: string): any;
  */
 export async function boot(): Promise<void> {
   const win = window as any;
+  setAppPhase("booting");
+  win.__deepnestShowMessage = (text: string, isError?: boolean) => {
+    showMessage(text, Boolean(isError));
+  };
 
   // ── 1. Require Electron / Node modules ────────────────
   const { ipcRenderer } = require("electron");
@@ -83,12 +89,14 @@ export async function boot(): Promise<void> {
   await cfgService.initialize();
   configServiceRef.value = cfgService;
 
+  // Expose on window — deepnest.js calls window.config.getSync() directly
+  (window as any).config = cfgService;
+
   // Push config into engine
   const cfgValues = cfgService.getSync();
   dn.config(cfgValues);
   config.value = cfgValues;
 
-  // ── 4. ImportService ──────────────────────────────────
   const { ImportService } = await import(
     /* @vite-ignore */ "../../build/ui/services/import.service.js"
   );
@@ -104,10 +112,8 @@ export async function boot(): Promise<void> {
     svgPreProcessor,
     config: cfgService,
     deepNest: dn,
-    // ractive is null — no longer used
   });
 
-  // ── 5. ExportService ──────────────────────────────────
   const { ExportService } = await import(
     /* @vite-ignore */ "../../build/ui/services/export.service.js"
   );
@@ -120,9 +126,11 @@ export async function boot(): Promise<void> {
     config: cfgService,
     deepNest: dn,
     svgParser: sp,
+    exportLoadingCallback: (loading: boolean) => {
+      exportBusy.value = loading;
+    },
   });
 
-  // ── 6. NestingService ─────────────────────────────────
   const { NestingService } = await import(
     /* @vite-ignore */ "../../build/ui/services/nesting.service.js"
   );
@@ -130,8 +138,6 @@ export async function boot(): Promise<void> {
     fs,
     ipcRenderer,
     deepNest: dn,
-    // Provide a minimal Ractive-like shim so createDisplayCallback doesn't
-    // bail out at the `if (!this.nestRactive)` guard.
     nestRactive: {
       update: async () => {
         nests.value = dn.nests ?? [];
@@ -149,15 +155,41 @@ export async function boot(): Promise<void> {
       try {
         exportService.exportToJson();
       } catch {
-        /* no result to export */
+        // No result to export yet
       }
+    },
+    uiBridge: {
+      setViewMode: (mode: "main" | "nest") => {
+        if (mode === "main") {
+          isNesting.value = false;
+          nestProgress.value = null;
+          return;
+        }
+        isNesting.value = true;
+      },
+      clearProgressIndicators: () => {
+        nestProgress.value = null;
+      },
+      setStopButtonState: (state: "stop" | "stop-disabled" | "start") => {
+        if (state === "stop") {
+          isNesting.value = true;
+          return;
+        }
+        if (state === "stop-disabled" || state === "start") {
+          isNesting.value = false;
+        }
+      },
     },
   });
 
-  // ── Expose services for components ────────────────────
   win._importService = importService;
   win._exportService = exportService;
   win._nestingService = nestingService;
+  win._ensureUiServices = async () => ({
+    importService,
+    exportService,
+    nestingService,
+  });
 
   // ── 7. Sync initial signals ───────────────────────────
   parts.value = dn.parts;
@@ -178,6 +210,10 @@ export async function boot(): Promise<void> {
 
   // Progress listener (not registered by DeepNest itself)
   ipcRenderer.on("background-progress", (_evt: any, payload: any) => {
+    if (payload && typeof payload.progress === "number" && payload.progress < 0) {
+      nestProgress.value = null;
+      return;
+    }
     nestProgress.value = payload;
   });
 
@@ -192,5 +228,6 @@ export async function boot(): Promise<void> {
     return result;
   };
 
+  setAppPhase("idle");
   console.log("[Preact UI] Boot complete");
 }

@@ -25,6 +25,20 @@ export const darkMode = signal<boolean>(
   localStorage.getItem("darkMode") === "true"
 );
 
+export type AppPhase =
+  | "booting"
+  | "idle"
+  | "importing"
+  | "nesting"
+  | "exporting"
+  | "busy";
+
+export const appPhase = signal<AppPhase>("booting");
+
+export function setAppPhase(phase: AppPhase): void {
+  appPhase.value = phase;
+}
+
 /** Toggle dark mode and persist */
 export function toggleDarkMode(): void {
   darkMode.value = !darkMode.value;
@@ -161,9 +175,11 @@ export const configServiceRef = signal<ConfigObject | null>(null);
 
 // ─── Import busy state ──────────────────────────────────
 export const importBusy = signal(false);
+export const exportBusy = signal(false);
 
 // ─── Preset modal ────────────────────────────────────────
 export const presetModalOpen = signal(false);
+export const commandPaletteOpen = signal(false);
 
 // ─── Layout / resize ─────────────────────────────────────
 const LEFT_PANEL_MIN = 260;

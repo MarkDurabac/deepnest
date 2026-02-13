@@ -2,12 +2,14 @@
  * Home page: contains the parts list view + import view (or nest view when nesting).
  * Replaces the #home .page section from index.html
  */
-import { useCallback, useEffect, useRef } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef } from "preact/hooks";
 import {
+  darkMode,
   isNesting,
   nests,
   parts,
   importBusy,
+  exportBusy,
   deepNestRef,
   selectedParts,
   touchParts,
@@ -16,8 +18,12 @@ import {
   sheetDialogOpen,
   leftPanelWidth,
   setLeftPanelWidth,
+  setAppPhase,
   showMessage,
   sheetParts,
+  toggleDarkMode,
+  activePage,
+  commandPaletteOpen,
 } from "../store/index.ts";
 import { TopNav } from "./TopNav.tsx";
 import { PartsTable } from "./PartsTable.tsx";
@@ -25,26 +31,40 @@ import { ImportPreview } from "./ImportPreview.tsx";
 import { SheetDialog } from "./SheetDialog.tsx";
 import { NestView } from "./NestView.tsx";
 import { ProgressBar } from "./ProgressBar.tsx";
+import { CommandPalette, type CommandItem } from "./CommandPalette.tsx";
 
 export function HomePage() {
   const showNestView = isNesting.value || nests.value.length > 0;
   const panelWidth = leftPanelWidth.value;
   const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
-  const handleImport = useCallback(async () => {
-    // Will be wired to ImportService in boot.ts
+  const ensureUiServices = useCallback(async () => {
     const win = window as any;
-    if (win._importService) {
-      importBusy.value = true;
-      try {
-        await win._importService.showImportDialog();
-        touchParts();
-        touchImports();
-      } finally {
-        importBusy.value = false;
-      }
+    if (typeof win._ensureUiServices === "function") {
+      await win._ensureUiServices();
     }
   }, []);
+
+  const handleImport = useCallback(async () => {
+    await ensureUiServices();
+    const win = window as any;
+
+    if (!win._importService) {
+      showMessage("Import service unavailable", true);
+      return;
+    }
+
+    importBusy.value = true;
+    setAppPhase("importing");
+    try {
+      await win._importService.showImportDialog();
+      touchParts();
+      touchImports();
+    } finally {
+      importBusy.value = false;
+      setAppPhase(isNesting.value ? "nesting" : "idle");
+    }
+  }, [ensureUiServices]);
 
   const deleteSelectedParts = useCallback(() => {
     const dn = deepNestRef.value;
@@ -65,44 +85,122 @@ export function HomePage() {
     showMessage(`${toDelete.length} part${toDelete.length > 1 ? "s" : ""} deleted`);
   }, []);
 
-  const handleStartNest = useCallback(() => {
+  const handleStartNest = useCallback(async () => {
+    if (sheetParts.value.length === 0) {
+      showMessage("Add at least one sheet before starting nest", true);
+      return;
+    }
+
+    await ensureUiServices();
     const dn = deepNestRef.value;
     const win = window as any;
     if (dn && win._nestingService) {
-      isNesting.value = true;
       // NestingService.startNesting expects (progressCallback, trigger)
-      win._nestingService.startNesting(null, "user");
+      const started = win._nestingService.startNesting(null, "user");
+      if (!started) {
+        isNesting.value = false;
+        setAppPhase("idle");
+      } else {
+        isNesting.value = true;
+        setAppPhase("nesting");
+      }
     }
-  }, []);
+  }, [ensureUiServices]);
 
-  const handleStopNest = useCallback(() => {
+  const handleStopNest = useCallback(async () => {
+    await ensureUiServices();
     const win = window as any;
     if (win._nestingService) {
-      win._nestingService.stopNesting();
-      isNesting.value = false;
+      const stopped = win._nestingService.stopNesting();
+      if (stopped) {
+        isNesting.value = false;
+        setAppPhase("idle");
+      }
     }
-  }, []);
+  }, [ensureUiServices]);
 
-  const handleBack = useCallback(() => {
+  const handleBack = useCallback(async () => {
+    await ensureUiServices();
+    const win = window as any;
+    if (win._nestingService) {
+      win._nestingService.goBack();
+      setAppPhase("idle");
+      return;
+    }
     isNesting.value = false;
     nests.value = [];
     touchNests();
-  }, []);
+    setAppPhase("idle");
+  }, [ensureUiServices]);
 
-  const handleExportSvg = useCallback(() => {
+  const handleExportSvg = useCallback(async () => {
+    if (nests.value.length === 0) {
+      showMessage("No nest result to export", true);
+      return;
+    }
+
+    await ensureUiServices();
     const win = window as any;
-    win._exportService?.exportToSvg();
-  }, []);
+    if (!win._exportService) {
+      showMessage("Export service unavailable", true);
+      return;
+    }
+
+    setAppPhase("exporting");
+    exportBusy.value = true;
+    try {
+      win._exportService.exportToSvg();
+    } finally {
+      exportBusy.value = false;
+      setAppPhase(isNesting.value ? "nesting" : "idle");
+    }
+  }, [ensureUiServices]);
 
   const handleExportDxf = useCallback(async () => {
-    const win = window as any;
-    await win._exportService?.exportToDxf();
-  }, []);
+    if (nests.value.length === 0) {
+      showMessage("No nest result to export", true);
+      return;
+    }
 
-  const handleExportJson = useCallback(() => {
+    await ensureUiServices();
     const win = window as any;
-    win._exportService?.exportToJson();
-  }, []);
+    if (!win._exportService) {
+      showMessage("Export service unavailable", true);
+      return;
+    }
+
+    setAppPhase("exporting");
+    exportBusy.value = true;
+    try {
+      await win._exportService.exportToDxf();
+    } finally {
+      exportBusy.value = false;
+      setAppPhase(isNesting.value ? "nesting" : "idle");
+    }
+  }, [ensureUiServices]);
+
+  const handleExportJson = useCallback(async () => {
+    if (nests.value.length === 0) {
+      showMessage("No nest result to export", true);
+      return;
+    }
+
+    await ensureUiServices();
+    const win = window as any;
+    if (!win._exportService) {
+      showMessage("Export service unavailable", true);
+      return;
+    }
+
+    setAppPhase("exporting");
+    exportBusy.value = true;
+    try {
+      win._exportService.exportToJson();
+    } finally {
+      exportBusy.value = false;
+      setAppPhase(isNesting.value ? "nesting" : "idle");
+    }
+  }, [ensureUiServices]);
 
   const handleResizeMouseDown = useCallback((ev: MouseEvent) => {
     resizeStartRef.current = { startX: ev.clientX, startWidth: leftPanelWidth.value };
@@ -140,6 +238,14 @@ export function HomePage() {
       if (inField) return;
 
       const ctrlOrCmd = ev.ctrlKey || ev.metaKey;
+      const paletteOpen = commandPaletteOpen.value;
+
+      if (ctrlOrCmd && ev.key.toLowerCase() === "k") {
+        // handled by CommandPalette
+        return;
+      }
+
+      if (paletteOpen) return;
 
       if (ctrlOrCmd && ev.key.toLowerCase() === "i") {
         ev.preventDefault();
@@ -150,7 +256,7 @@ export function HomePage() {
       if (ctrlOrCmd && ev.key === "Enter") {
         ev.preventDefault();
         if (sheetParts.value.length > 0) {
-          handleStartNest();
+          void handleStartNest();
         } else {
           showMessage("Add at least one sheet before starting nest", true);
         }
@@ -167,16 +273,142 @@ export function HomePage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [deleteSelectedParts, handleImport, handleStartNest]);
 
+  const commandItems = useMemo<CommandItem[]>(
+    () => [
+      {
+        id: "import",
+        label: "Import files",
+        hint: "Ctrl+I",
+        keywords: ["svg", "dxf", "dwg", "asm", "psm", "import"],
+        run: handleImport,
+      },
+      {
+        id: "start-nest",
+        label: "Start nest",
+        hint: "Ctrl+Enter",
+        keywords: ["nest", "start", "placement"],
+        disabled: sheetParts.value.length === 0 || isNesting.value,
+        run: handleStartNest,
+      },
+      {
+        id: "stop-nest",
+        label: "Stop nest",
+        keywords: ["nest", "stop", "cancel"],
+        disabled: !isNesting.value,
+        run: handleStopNest,
+      },
+      {
+        id: "export-svg",
+        label: "Export SVG",
+        keywords: ["export", "svg"],
+        disabled: nests.value.length === 0,
+        run: handleExportSvg,
+      },
+      {
+        id: "export-dxf",
+        label: "Export DXF",
+        keywords: ["export", "dxf"],
+        disabled: nests.value.length === 0,
+        run: handleExportDxf,
+      },
+      {
+        id: "export-json",
+        label: "Export JSON",
+        keywords: ["export", "json"],
+        disabled: nests.value.length === 0,
+        run: handleExportJson,
+      },
+      {
+        id: "add-sheet",
+        label: "Add sheet",
+        keywords: ["sheet", "material", "panel"],
+        disabled: showNestView,
+        run: () => {
+          sheetDialogOpen.value = true;
+        },
+      },
+      {
+        id: "delete-selected",
+        label: "Delete selected parts",
+        hint: "Del",
+        keywords: ["delete", "selected", "parts"],
+        disabled: selectedParts.value.length === 0 || showNestView,
+        run: deleteSelectedParts,
+      },
+      {
+        id: "go-home",
+        label: "Go to Home",
+        keywords: ["home", "navigation"],
+        run: () => {
+          activePage.value = "home";
+        },
+      },
+      {
+        id: "go-config",
+        label: "Go to Configuration",
+        keywords: ["config", "settings", "navigation"],
+        run: () => {
+          activePage.value = "config";
+        },
+      },
+      {
+        id: "go-info",
+        label: "Go to Info",
+        keywords: ["info", "about", "navigation"],
+        run: () => {
+          activePage.value = "info";
+        },
+      },
+      {
+        id: "toggle-theme",
+        label: darkMode.value ? "Switch to Light theme" : "Switch to Dark theme",
+        keywords: ["theme", "dark", "light", "ui"],
+        run: () => {
+          toggleDarkMode();
+        },
+      },
+    ],
+    [
+      darkMode.value,
+      deleteSelectedParts,
+      handleExportDxf,
+      handleExportJson,
+      handleExportSvg,
+      handleImport,
+      handleStartNest,
+      handleStopNest,
+      isNesting.value,
+      nests.value.length,
+      selectedParts.value.length,
+      sheetParts.value.length,
+      showNestView,
+    ]
+  );
+
   return (
     <div class="flex h-full flex-col overflow-hidden">
       <TopNav
-        onImport={handleImport}
-        onStartNest={handleStartNest}
-        onStopNest={handleStopNest}
-        onBack={handleBack}
-        onExportSvg={handleExportSvg}
-        onExportDxf={handleExportDxf}
-        onExportJson={handleExportJson}
+        onImport={() => {
+          void handleImport();
+        }}
+        onStartNest={() => {
+          void handleStartNest();
+        }}
+        onStopNest={() => {
+          void handleStopNest();
+        }}
+        onBack={() => {
+          void handleBack();
+        }}
+        onExportSvg={() => {
+          void handleExportSvg();
+        }}
+        onExportDxf={() => {
+          void handleExportDxf();
+        }}
+        onExportJson={() => {
+          void handleExportJson();
+        }}
         showNestView={showNestView}
       />
 
@@ -251,6 +483,8 @@ export function HomePage() {
           </div>
         </div>
       )}
+
+      <CommandPalette commands={commandItems} />
     </div>
   );
 }

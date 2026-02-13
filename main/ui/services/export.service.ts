@@ -118,6 +118,11 @@ interface ExportButtonElement extends HTMLElement {
 }
 
 /**
+ * Callback for export loading state changes
+ */
+type ExportLoadingCallback = (loading: boolean) => void;
+
+/**
  * Export options for SVG generation
  */
 export interface ExportOptions {
@@ -174,6 +179,9 @@ export class ExportService {
   /** Export button element for spinner state */
   private exportButton: ExportButtonElement | null = null;
 
+  /** Optional UI callback for loading state (Preact/signals, etc.) */
+  private exportLoadingCallback: ExportLoadingCallback | null = null;
+
   /** Flag to track if export is busy */
   private isExporting = false;
 
@@ -191,6 +199,7 @@ export class ExportService {
     deepNest?: DeepNestInstance;
     svgParser?: SvgParserInstance;
     exportButton?: ExportButtonElement;
+    exportLoadingCallback?: ExportLoadingCallback;
   }) {
     if (options) {
       this.dialog = options.dialog || null;
@@ -202,6 +211,7 @@ export class ExportService {
       this.deepNest = options.deepNest || null;
       this.svgParser = options.svgParser || null;
       this.exportButton = options.exportButton || null;
+      this.exportLoadingCallback = options.exportLoadingCallback || null;
     }
   }
 
@@ -278,6 +288,14 @@ export class ExportService {
   }
 
   /**
+   * Set loading callback for modern UI integrations
+   * @param callback - Called with true/false on loading changes
+   */
+  setExportLoadingCallback(callback: ExportLoadingCallback): void {
+    this.exportLoadingCallback = callback;
+  }
+
+  /**
    * Get the conversion server URL from config or use default
    * @returns Conversion server URL
    */
@@ -311,6 +329,8 @@ export class ExportService {
    * Show the export button as loading
    */
   private setExportLoading(loading: boolean): void {
+    this.exportLoadingCallback?.(loading);
+
     if (this.exportButton) {
       if (loading) {
         this.exportButton.className = "button export spinner";

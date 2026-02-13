@@ -3,10 +3,12 @@
  * Contains Import, Start Nest, Stop, Export, Back buttons.
  */
 import {
+  appPhase,
   isNesting,
   sheetParts,
   nests,
   importBusy,
+  exportBusy,
   parts,
 } from "../store/index.ts";
 
@@ -34,9 +36,24 @@ export function TopNav({
   const nesting = isNesting.value;
   const hasSheets = sheetParts.value.length > 0;
   const busy = importBusy.value;
+  const exporting = exportBusy.value;
   const hasNests = nests.value.length > 0;
   const totalParts = parts.value.length;
   const sheetCount = sheetParts.value.length;
+  const phase = appPhase.value;
+
+  const phaseLabel =
+    phase === "booting"
+      ? "Booting"
+      : phase === "importing"
+        ? "Importing"
+        : phase === "exporting"
+          ? "Exporting"
+          : phase === "nesting"
+            ? "Nesting"
+            : phase === "busy"
+              ? "Busy"
+              : "Idle";
 
   if (showNestView) {
     // Nest view top nav
@@ -57,12 +74,12 @@ export function TopNav({
         <li class="electron-no-drag group relative">
           <button
             class={`cursor-pointer rounded-lg px-4 py-2 text-sm font-bold uppercase transition
-              ${hasNests ? "bg-dn-primary text-white hover:bg-dn-primary-hover" : "cursor-not-allowed bg-gray-300 text-gray-500"}`}
-            disabled={!hasNests}
+              ${hasNests && !exporting ? "bg-dn-primary text-white hover:bg-dn-primary-hover" : "cursor-not-allowed bg-gray-300 text-gray-500"}`}
+            disabled={!hasNests || exporting}
           >
-            Export
+            {exporting ? "Exporting..." : "Export"}
           </button>
-          {hasNests && (
+          {hasNests && !exporting && (
             <ul class="invisible absolute left-0 top-full z-50 mt-1 min-w-[140px] overflow-hidden rounded-lg border border-dn-border/80
               bg-white shadow-xl group-hover:visible dark:border-white/10 dark:bg-[#2d2d2d]">
               <li>
@@ -123,7 +140,7 @@ export function TopNav({
           </li>
         ) : (
           <li class="ml-auto mr-2 rounded-md border border-dn-border/80 bg-dn-light/80 px-2 py-1 text-xs text-dn-text-muted dark:border-white/10 dark:bg-black/30 dark:text-gray-300">
-            Ready
+            {phaseLabel}
           </li>
         )}
       </ul>
@@ -161,7 +178,7 @@ export function TopNav({
         Sheets: {sheetCount}
       </li>
       <li class="ml-auto mr-2 rounded-md border border-dn-border/80 bg-dn-light/80 px-2 py-1 text-xs text-dn-text-muted dark:border-white/10 dark:bg-black/30 dark:text-gray-300">
-        {hasSheets ? "Ready to nest" : "Add a sheet to start"}
+        {phaseLabel === "Idle" ? (hasSheets ? "Ready to nest" : "Add a sheet to start") : phaseLabel}
       </li>
     </ul>
   );

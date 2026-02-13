@@ -5,33 +5,44 @@
 
 import type { ThrottleOptions } from "../types/index.js";
 
+type ToastBridgeFn = (text: string, isError?: boolean) => void;
+
+interface DeepNestWindow extends Window {
+  __deepnestShowMessage?: ToastBridgeFn;
+}
+
+function htmlToText(input: string): string {
+  return input
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .trim();
+}
+
 /**
- * Display a message in the UI message box with optional error styling
- * @param txt - The message text to display (can include HTML)
- * @param error - If true, applies error styling
+ * Display a message through the active UI bridge (Preact toast channel).
+ * Falls back to console output if no bridge is registered.
+ * @param txt - Message text (HTML is converted to plain text)
+ * @param error - If true, emits an error message
  */
 export function message(txt: string, error?: boolean): void {
-  const messageElement = document.querySelector("#message");
-  const wrapperElement = document.querySelector("#messagewrapper");
-  const contentElement = document.querySelector("#messagecontent");
+  const formattedText = htmlToText(txt);
+  const win = window as DeepNestWindow;
 
-  if (!messageElement || !wrapperElement || !contentElement) {
+  if (typeof win.__deepnestShowMessage === "function") {
+    win.__deepnestShowMessage(formattedText, Boolean(error));
     return;
   }
 
+  // No legacy message DOM fallback in the Preact renderer.
   if (error) {
-    messageElement.className = "error";
+    console.error(formattedText);
   } else {
-    messageElement.className = "";
+    console.info(formattedText);
   }
-
-  wrapperElement.className = "active";
-
-  setTimeout(() => {
-    messageElement.className += " animated bounce";
-  }, 100);
-
-  contentElement.innerHTML = txt;
 }
 
 /**

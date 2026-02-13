@@ -1,16 +1,26 @@
+import { lazy, Suspense } from "preact/compat";
 import { useEffect } from "preact/hooks";
 import { useSignalEffect } from "@preact/signals";
-import { activePage, darkMode, showMessage } from "./store/index.ts";
+import { activePage, darkMode, setAppPhase, showMessage } from "./store/index.ts";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { HomePage } from "./components/HomePage.tsx";
-import { ConfigPage } from "./components/ConfigPage.tsx";
-import { InfoPage } from "./components/InfoPage.tsx";
 import { MessageToast } from "./components/MessageToast.tsx";
 import { boot } from "./services/boot.ts";
+
+const ConfigPage = lazy(async () => {
+  const mod = await import("./components/ConfigPage.tsx");
+  return { default: mod.ConfigPage };
+});
+
+const InfoPage = lazy(async () => {
+  const mod = await import("./components/InfoPage.tsx");
+  return { default: mod.InfoPage };
+});
 
 export function App() {
   useEffect(() => {
     boot().catch((err: unknown) => {
+      setAppPhase("idle");
       console.error("Boot failed:", err);
       showMessage("Failed to initialize application", true);
     });
@@ -33,10 +43,26 @@ export function App() {
       <Sidebar />
       <div class="relative z-10 flex flex-1 flex-col overflow-hidden">
         {page === "home" && <HomePage />}
-        {page === "config" && <ConfigPage />}
-        {page === "info" && <InfoPage />}
+        {page === "config" && (
+          <Suspense fallback={<PageLoading label="Loading configuration..." />}>
+            <ConfigPage />
+          </Suspense>
+        )}
+        {page === "info" && (
+          <Suspense fallback={<PageLoading label="Loading info..." />}>
+            <InfoPage />
+          </Suspense>
+        )}
       </div>
       <MessageToast />
+    </div>
+  );
+}
+
+function PageLoading({ label }: { label: string }) {
+  return (
+    <div class="flex h-full items-center justify-center text-sm text-dn-text-muted dark:text-gray-300">
+      {label}
     </div>
   );
 }

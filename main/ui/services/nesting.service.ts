@@ -55,30 +55,21 @@ export type DisplayNestFunction = (nest: SelectableNestingResult) => void;
 export type SaveJsonFunction = () => void;
 
 /**
- * DOM element selectors used by the nesting service
+ * Stop/start button states used by UI integrations
  */
-const SELECTORS = {
-  MAIN_VIEW: "#main",
-  NEST_VIEW: "#nest",
-  NEST_DISPLAY: "#nestdisplay",
-  EXPORT_WRAPPER: "#export_wrapper",
-  EXPORT_BUTTON: "#export",
-  STOP_BUTTON: "#stopnest",
-  START_BUTTON: "#startnest",
-  BACK_BUTTON: "#back",
-  PROGRESS_ITEMS: "li.progress",
-} as const;
+export type StopButtonState = "stop" | "stop-disabled" | "start";
 
 /**
- * CSS classes used for button states
+ * UI bridge so this service can drive a modern UI without direct DOM manipulation.
+ * Legacy visual controls are intentionally removed from this service.
  */
-const BUTTON_CLASSES = {
-  STOP: "button stop",
-  STOP_DISABLED: "button stop disabled",
-  START: "button start",
-  EXPORT: "button export",
-  EXPORT_DISABLED: "button export disabled",
-} as const;
+export interface NestingUiBridge {
+  setViewMode?(mode: "main" | "nest"): void;
+  setExportEnabled?(enabled: boolean): void;
+  clearProgressIndicators?(): void;
+  setStopButtonState?(state: StopButtonState): void;
+  clearNestDisplay?(): void;
+}
 
 /**
  * Cache directory path for NFP (No-Fit Polygon) calculations
@@ -109,6 +100,9 @@ export class NestingService {
   /** Function to save current result to JSON */
   private saveJsonFn: SaveJsonFunction | null = null;
 
+  /** Bridge for UI state updates (Preact/signals, etc.) */
+  private uiBridge: NestingUiBridge | null = null;
+
   /** Flag indicating if nesting is being started */
   private isStarting = false;
 
@@ -126,6 +120,7 @@ export class NestingService {
     nestRactive?: RactiveInstance<NestViewData>;
     displayNestFn?: DisplayNestFunction;
     saveJsonFn?: SaveJsonFunction;
+    uiBridge?: NestingUiBridge;
   }) {
     if (options) {
       this.fs = options.fs || null;
@@ -134,6 +129,7 @@ export class NestingService {
       this.nestRactive = options.nestRactive || null;
       this.displayNestFn = options.displayNestFn || null;
       this.saveJsonFn = options.saveJsonFn || null;
+      this.uiBridge = options.uiBridge || null;
     }
   }
 
@@ -183,6 +179,14 @@ export class NestingService {
    */
   setSaveJsonFunction(saveJsonFn: SaveJsonFunction): void {
     this.saveJsonFn = saveJsonFn;
+  }
+
+  /**
+   * Set UI bridge callbacks for framework integrations (Preact/signals, etc.)
+   * @param uiBridge - UI bridge implementation
+   */
+  setUiBridge(uiBridge: NestingUiBridge): void {
+    this.uiBridge = uiBridge;
   }
 
   /**
@@ -284,96 +288,43 @@ export class NestingService {
    * Switch the UI to the nest view
    */
   private switchToNestView(): void {
-    const mainView = document.querySelector(SELECTORS.MAIN_VIEW);
-    const nestView = document.querySelector(SELECTORS.NEST_VIEW);
-
-    if (mainView) {
-      mainView.className = "";
-    }
-    if (nestView) {
-      nestView.className = "active";
-    }
+    this.uiBridge?.setViewMode?.("nest");
   }
 
   /**
    * Switch the UI back to the main view
    */
   private switchToMainView(): void {
-    const mainView = document.querySelector(SELECTORS.MAIN_VIEW);
-    const nestView = document.querySelector(SELECTORS.NEST_VIEW);
-
-    if (mainView) {
-      mainView.className = "active";
-    }
-    if (nestView) {
-      nestView.className = "";
-    }
+    this.uiBridge?.setViewMode?.("main");
   }
 
   /**
    * Enable the export button
    */
   private enableExportButton(): void {
-    const exportWrapper = document.querySelector(SELECTORS.EXPORT_WRAPPER);
-    const exportButton = document.querySelector(SELECTORS.EXPORT_BUTTON);
-
-    if (exportWrapper) {
-      exportWrapper.className = "active";
-    }
-    if (exportButton) {
-      exportButton.className = BUTTON_CLASSES.EXPORT;
-    }
+    this.uiBridge?.setExportEnabled?.(true);
   }
 
   /**
    * Disable the export button
    */
   private disableExportButton(): void {
-    const exportWrapper = document.querySelector(SELECTORS.EXPORT_WRAPPER);
-    const exportButton = document.querySelector(SELECTORS.EXPORT_BUTTON);
-
-    if (exportWrapper) {
-      exportWrapper.className = "";
-    }
-    if (exportButton) {
-      exportButton.className = BUTTON_CLASSES.EXPORT_DISABLED;
-    }
+    this.uiBridge?.setExportEnabled?.(false);
   }
 
   /**
    * Clear progress indicators in the UI
    */
   private clearProgressIndicators(): void {
-    const progressItems = document.querySelectorAll(SELECTORS.PROGRESS_ITEMS);
-    progressItems.forEach((p) => {
-      p.removeAttribute("id");
-      p.className = "progress";
-    });
+    this.uiBridge?.clearProgressIndicators?.();
   }
 
   /**
    * Update the stop/start button state
    * @param state - Button state: "stop", "stop-disabled", or "start"
    */
-  private updateStopButton(state: "stop" | "stop-disabled" | "start"): void {
-    const stopButton = document.querySelector(SELECTORS.STOP_BUTTON);
-    if (!stopButton) {
-      return;
-    }
-
-    switch (state) {
-      case "stop":
-        stopButton.className = BUTTON_CLASSES.STOP;
-        stopButton.innerHTML = "Stop nest";
-        break;
-      case "stop-disabled":
-        stopButton.className = BUTTON_CLASSES.STOP_DISABLED;
-        break;
-      case "start":
-        stopButton.className = BUTTON_CLASSES.START;
-        stopButton.innerHTML = "Start nest";
-        break;
-    }
+  private updateStopButton(state: StopButtonState): void {
+    this.uiBridge?.setStopButtonState?.(state);
   }
 
   /**
@@ -527,17 +478,10 @@ export class NestingService {
    * Toggles between stop and start states
    */
   handleStopStartToggle(): void {
-    const stopButton = document.querySelector(SELECTORS.STOP_BUTTON);
-    if (!stopButton) {
-      return;
-    }
-
-    const buttonClass = stopButton.className;
-
-    if (buttonClass === BUTTON_CLASSES.STOP) {
+    if (this.isWorking()) {
       // Currently showing stop button - stop nesting
       this.stopNesting();
-    } else if (buttonClass === BUTTON_CLASSES.START) {
+    } else {
       // Currently showing start button - start nesting
       this.updateStopButton("stop-disabled");
 
@@ -558,46 +502,40 @@ export class NestingService {
     // Switch to main view immediately
     this.switchToMainView();
 
-    // Perform cleanup after a delay to allow for animation
-    setTimeout(() => {
-      // Stop nesting if it's running
-      if (this.isWorking()) {
-        if (this.ipcRenderer) {
-          this.ipcRenderer.send(IPC_CHANNELS.BACKGROUND_STOP);
-        }
-
-        if (this.deepNest) {
-          this.deepNest.stop();
-        }
-
-        this.clearProgressIndicators();
+    // Stop nesting if it's running
+    if (this.isWorking()) {
+      if (this.ipcRenderer) {
+        this.ipcRenderer.send(IPC_CHANNELS.BACKGROUND_STOP);
       }
 
-      // Reset DeepNest state
       if (this.deepNest) {
-        this.deepNest.reset();
+        this.deepNest.stop();
       }
 
-      // Delete the cache
-      this.deleteCache();
+      this.clearProgressIndicators();
+    }
 
-      // Update the nest view
-      if (this.nestRactive) {
-        this.nestRactive.update("nests");
-      }
+    // Reset DeepNest state
+    if (this.deepNest) {
+      this.deepNest.reset();
+    }
 
-      // Clear the nest display
-      const nestDisplay = document.querySelector(SELECTORS.NEST_DISPLAY);
-      if (nestDisplay) {
-        nestDisplay.innerHTML = "";
-      }
+    // Delete the cache
+    this.deleteCache();
 
-      // Reset the stop button
-      this.updateStopButton("stop");
+    // Update the nest view
+    if (this.nestRactive) {
+      this.nestRactive.update("nests");
+    }
 
-      // Disable export button
-      this.disableExportButton();
-    }, 2000);
+    // Notify UI to clear visual nest display
+    this.uiBridge?.clearNestDisplay?.();
+
+    // Reset the stop button
+    this.updateStopButton("start");
+
+    // Disable export button
+    this.disableExportButton();
   }
 
   /**
@@ -654,23 +592,7 @@ export class NestingService {
    * Call this after the DOM is ready
    */
   bindEventHandlers(): void {
-    // Bind start button
-    const startButton = document.querySelector(SELECTORS.START_BUTTON);
-    if (startButton) {
-      startButton.addEventListener("click", () => this.startNesting(undefined, "user"));
-    }
-
-    // Bind stop/start toggle button
-    const stopButton = document.querySelector(SELECTORS.STOP_BUTTON);
-    if (stopButton) {
-      stopButton.addEventListener("click", () => this.handleStopStartToggle());
-    }
-
-    // Bind back button
-    const backButton = document.querySelector(SELECTORS.BACK_BUTTON);
-    if (backButton) {
-      backButton.addEventListener("click", () => this.goBack());
-    }
+    // Intentionally a no-op: visual event binding is owned by the Preact UI.
   }
 
   /**

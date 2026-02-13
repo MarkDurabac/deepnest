@@ -153,13 +153,8 @@ function createMainWindow() {
       })
     );
   } else {
-    // Fall back to legacy UI
-    mainWindow.loadURL(
-      url.format({
-        pathname: path.join(__dirname, "./main/index.html"),
-        protocol: "file:",
-        slashes: true,
-      })
+    throw new Error(
+      "dist-renderer/index.html not found. Build the Preact renderer first (bun run build:ui)."
     );
   }
 
