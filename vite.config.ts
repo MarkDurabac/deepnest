@@ -1,30 +1,51 @@
 import { defineConfig } from "vite";
 import preact from "@preact/preset-vite";
+import tailwindcss from "@tailwindcss/vite";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// All Node / Electron modules that must stay external (not bundled by Vite)
+const electronExternals = [
+  "electron",
+  "@electron/remote",
+  "graceful-fs",
+  "form-data",
+  "axios",
+  "marked",
+  "path",
+  "fs",
+  "os",
+  "url",
+  "child_process",
+  "node:path",
+  "node:fs",
+  "node:os",
+  "node:url",
+  "node:child_process",
+  "@deepnest/svg-preprocessor",
+  "@deepnest/calculate-nfp",
+];
 
 export default defineConfig({
-  plugins: [preact()],
+  plugins: [preact(), tailwindcss()],
   root: path.resolve(__dirname, "src"),
   base: "./",
+  optimizeDeps: {
+    // Native modules and Electron-only packages must not be optimized for browser dev server.
+    exclude: electronExternals,
+  },
   build: {
     outDir: path.resolve(__dirname, "dist-renderer"),
     emptyOutDir: true,
     sourcemap: true,
     rollupOptions: {
-      external: [
-        "electron",
-        "@electron/remote",
-        "graceful-fs",
-        "form-data",
-        "axios",
-        "path",
-        "fs",
-        "os",
-        "child_process",
-        "node:child_process",
-        "@deepnest/svg-preprocessor",
-        "@deepnest/calculate-nfp",
-      ],
+      external: electronExternals,
+      output: {
+        // Keep require() calls for CJS-only Electron modules
+        format: "es",
+      },
     },
   },
   resolve: {
@@ -38,7 +59,6 @@ export default defineConfig({
     },
   },
   server: {
-    // For Electron dev mode
     port: 5173,
   },
 });

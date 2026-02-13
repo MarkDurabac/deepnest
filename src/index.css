@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 /* ===== Custom Fonts ===== */
 @font-face {
@@ -15,13 +16,6 @@
   font-style: normal;
 }
 
-@font-face {
-  font-family: "LatoLatinWebHairline";
-  src: url("../main/font/fonts/latolatin-hairline.woff2") format("woff2");
-  font-weight: 100;
-  font-style: normal;
-}
-
 /* ===== CSS Custom Properties ===== */
 :root {
   --nav-width: 4.375em;
@@ -29,20 +23,20 @@
 
 /* ===== Base Theme Layer ===== */
 @theme {
-  --color-dn-primary: #24c7ed;
-  --color-dn-primary-hover: #3eddf7;
-  --color-dn-dark: #404247;
-  --color-dn-darker: #242526;
-  --color-dn-darkest: #1a1a1a;
-  --color-dn-light: #f5f7f9;
-  --color-dn-border: #e2e8ed;
-  --color-dn-text: #404247;
-  --color-dn-text-muted: #818489;
-  --color-dn-input-bg: #e2e8ed;
-  --color-dn-input-border: #c8cedb;
-  --color-dn-table-hover: #f5f7f9;
-  --color-dn-danger: #ec2158;
-  --color-dn-success: #27ae60;
+  --color-dn-primary: #12b6dc;
+  --color-dn-primary-hover: #2dd4f2;
+  --color-dn-dark: #1f2d38;
+  --color-dn-darker: #18242e;
+  --color-dn-darkest: #111a20;
+  --color-dn-light: #f2f7fb;
+  --color-dn-border: #dbe6ee;
+  --color-dn-text: #27343f;
+  --color-dn-text-muted: #667786;
+  --color-dn-input-bg: #eaf2f7;
+  --color-dn-input-border: #c8d8e5;
+  --color-dn-table-hover: #ecf5fb;
+  --color-dn-danger: #e74c3c;
+  --color-dn-success: #1fa971;
 }
 
 /* ===== Global Reset ===== */
@@ -63,6 +57,8 @@ body {
   overflow: hidden;
   margin: 0;
   padding: 0;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* ===== Nest SVG Styles (kept for imperative SVG rendering) ===== */
@@ -122,12 +118,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c8cedb;
+  background: #b7c9d8;
   border-radius: 4px;
 }
 
 .dark ::-webkit-scrollbar-thumb {
-  background: #505050;
+  background: #3f5568;
 }
 
 /* ===== Electron drag region ===== */
@@ -137,4 +133,20 @@ body {
 
 .electron-no-drag {
   -webkit-app-region: no-drag;
+}
+
+/* ===== Subtle modern motion ===== */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-toast-in {
+  animation: toast-in 180ms ease-out;
 }

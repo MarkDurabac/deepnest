@@ -139,13 +139,29 @@ function createMainWindow() {
   })
 
   // and load the index.html of the app.
-  mainWindow.loadURL(
-    url.format({
-      pathname: path.join(__dirname, "./main/index.html"),
-      protocol: "file:",
-      slashes: true,
-    })
-  );
+  // In dev mode with Vite, optionally load from the dev server
+  const VITE_DEV_SERVER = process.env["VITE_DEV_SERVER_URL"];
+  if (VITE_DEV_SERVER) {
+    mainWindow.loadURL(VITE_DEV_SERVER);
+  } else if (fs.existsSync(path.join(__dirname, "dist-renderer", "index.html"))) {
+    // Production: load Vite-built output
+    mainWindow.loadURL(
+      url.format({
+        pathname: path.join(__dirname, "dist-renderer", "index.html"),
+        protocol: "file:",
+        slashes: true,
+      })
+    );
+  } else {
+    // Fall back to legacy UI
+    mainWindow.loadURL(
+      url.format({
+        pathname: path.join(__dirname, "./main/index.html"),
+        protocol: "file:",
+        slashes: true,
+      })
+    );
+  }
 
   mainWindow.setMenu(null);
 

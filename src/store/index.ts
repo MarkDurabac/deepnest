@@ -101,19 +101,54 @@ export const config = signal<UIConfig | null>(null);
 export const sortState = signal<SortState>({ field: null, direction: null });
 
 // ─── Message / toast ─────────────────────────────────────
-export const messageText = signal<string | null>(null);
-export const messageIsError = signal(false);
+export type ToastKind = "info" | "success" | "error";
 
-export function showMessage(text: string, isError = false): void {
-  messageText.value = text;
-  messageIsError.value = isError;
-  setTimeout(() => {
-    messageText.value = null;
-  }, 4000);
+export interface ToastMessage {
+  id: number;
+  text: string;
+  kind: ToastKind;
+  durationMs: number;
+  createdAt: number;
 }
 
-export function clearMessage(): void {
-  messageText.value = null;
+const DEFAULT_TOAST_DURATION_MS = 4200;
+let nextToastId = 1;
+
+export const toasts = signal<ToastMessage[]>([]);
+
+// Backward-compatible derived values used by legacy call sites.
+export const messageText = computed<string | null>(() => toasts.value[0]?.text ?? null);
+export const messageIsError = computed<boolean>(() => toasts.value[0]?.kind === "error");
+
+export function showMessage(
+  text: string,
+  isError = false,
+  durationMs = DEFAULT_TOAST_DURATION_MS
+): number {
+  const toast: ToastMessage = {
+    id: nextToastId++,
+    text,
+    kind: isError ? "error" : "success",
+    durationMs,
+    createdAt: Date.now(),
+  };
+
+  toasts.value = [...toasts.value, toast];
+
+  setTimeout(() => {
+    clearMessage(toast.id);
+  }, Math.max(1200, durationMs));
+
+  return toast.id;
+}
+
+export function clearMessage(toastId?: number): void {
+  if (toastId == null) {
+    if (toasts.value.length === 0) return;
+    toasts.value = toasts.value.slice(1);
+    return;
+  }
+  toasts.value = toasts.value.filter((t) => t.id !== toastId);
 }
 
 // ─── Sheet dialog ────────────────────────────────────────
@@ -129,3 +164,32 @@ export const importBusy = signal(false);
 
 // ─── Preset modal ────────────────────────────────────────
 export const presetModalOpen = signal(false);
+
+// ─── Layout / resize ─────────────────────────────────────
+const LEFT_PANEL_MIN = 260;
+const LEFT_PANEL_MAX = 620;
+const LEFT_PANEL_DEFAULT = 360;
+
+function getStoredLeftPanelWidth(): number {
+  try {
+    const raw = localStorage.getItem("ui.leftPanelWidth");
+    if (!raw) return LEFT_PANEL_DEFAULT;
+    const parsed = Number(raw);
+    if (Number.isNaN(parsed)) return LEFT_PANEL_DEFAULT;
+    return Math.max(LEFT_PANEL_MIN, Math.min(LEFT_PANEL_MAX, parsed));
+  } catch {
+    return LEFT_PANEL_DEFAULT;
+  }
+}
+
+export const leftPanelWidth = signal<number>(getStoredLeftPanelWidth());
+
+export function setLeftPanelWidth(width: number): void {
+  const clamped = Math.max(LEFT_PANEL_MIN, Math.min(LEFT_PANEL_MAX, width));
+  leftPanelWidth.value = clamped;
+  try {
+    localStorage.setItem("ui.leftPanelWidth", String(clamped));
+  } catch {
+    // Ignore storage errors
+  }
+}

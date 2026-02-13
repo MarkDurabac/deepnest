@@ -38,3 +38,4 @@ logs/security/
 bun.lock
 /main/vendor
 /main/vendor
+/dist-renderer/assets

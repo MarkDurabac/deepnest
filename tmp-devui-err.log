@@ -1,0 +1,2 @@
+$ vite --config vite.config.ts
+error: script "dev:ui" exited with code 58

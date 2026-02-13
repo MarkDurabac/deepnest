@@ -1,0 +1,27 @@
+[package]
+name = "wasm-deepnest"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Deepnest geometry acceleration layer in Rust/WASM (Clipper + geometry utilities)"
+
+[dependencies]
+clipper2-rust = "1.0"
+console_error_panic_hook = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+thiserror = "2"
+wasm-bindgen = "0.2"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = "debuginfo"
+
+[profile.release.package.wasm-deepnest]
+opt-level = 3
