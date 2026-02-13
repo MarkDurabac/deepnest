@@ -34,3 +34,7 @@ node_modules/
 .worktrees/
 .security-key
 logs/security/
+/main/vendor/duracli
+bun.lock
+/main/vendor
+/main/vendor

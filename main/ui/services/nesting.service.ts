@@ -423,9 +423,18 @@ export class NestingService {
   /**
    * Start the nesting process
    * @param progressCallback - Optional callback for progress updates
+   * @param trigger - Source of the start request
    * @returns True if nesting was started successfully
    */
-  startNesting(progressCallback?: ProgressCallback): boolean {
+  startNesting(
+    progressCallback?: ProgressCallback,
+    trigger: "user" | "system" = "system"
+  ): boolean {
+    if (trigger !== "user") {
+      message("Nesting start is restricted to explicit user action.", true);
+      return false;
+    }
+
     if (!this.deepNest) {
       message("DeepNest instance not available", true);
       return false;
@@ -535,7 +544,7 @@ export class NestingService {
       // After a delay, switch to stop state and start nesting
       setTimeout(() => {
         this.updateStopButton("stop");
-        this.startNesting();
+        this.startNesting(undefined, "user");
       }, 1000);
     }
     // If disabled, do nothing
@@ -648,7 +657,7 @@ export class NestingService {
     // Bind start button
     const startButton = document.querySelector(SELECTORS.START_BUTTON);
     if (startButton) {
-      startButton.addEventListener("click", () => this.startNesting());
+      startButton.addEventListener("click", () => this.startNesting(undefined, "user"));
     }
 
     // Bind stop/start toggle button

@@ -37,6 +37,13 @@
 import { NfpCache } from '../build/nfpDb.js';
 import { HullPolygon } from '../build/util/HullPolygon.js';
 
+const LOG_BACKGROUND =
+  process.env["deepnest_debug"] === "1" ||
+  process.env["DEEPNEST_BG_LOG"] === "1";
+const LOG_BACKGROUND_SUMMARY =
+  LOG_BACKGROUND || process.env["DEEPNEST_BG_SUMMARY"] === "1";
+const LOG_BACKGROUND_VERBOSE = process.env["DEEPNEST_BG_VERBOSE"] === "1";
+
 window.onload = function () {
   const { ipcRenderer } = require('electron');
   window.ipcRenderer = ipcRenderer;
@@ -2362,7 +2369,9 @@ function placeParts(sheets, parts, config, nestindex) {
 
   // there were parts that couldn't be placed
   // scale this value high - we really want to get all the parts in, even at the cost of opening new sheets
-  console.log('UNPLACED PARTS', parts.length, 'of', totalnum);
+  if (parts.length > 0 && LOG_BACKGROUND_SUMMARY) {
+    console.log('UNPLACED PARTS', parts.length, 'of', totalnum);
+  }
   for (let i = 0; i < parts.length; i++) {
     // console.log(`Fitness before unplaced penalty: ${fitness}`);
     // Massive penalty multiplier of 100,000,000 ensures unplaced parts severely degrade fitness
@@ -2479,10 +2488,14 @@ function placeParts(sheets, parts, config, nestindex) {
   // send finish progress signal
   ipcRenderer.send('background-progress', { index: nestindex, progress: -1 });
 
-  console.log('WATCH', allplacements);
+  if (LOG_BACKGROUND_VERBOSE) {
+    console.log('WATCH', allplacements);
+  }
 
   const utilisation = totalsheetarea > 0 ? (area / totalsheetarea) * 100 : 0;
-  console.log(`Utilisation of the sheet(s): ${utilisation.toFixed(2)}%`);
+  if (LOG_BACKGROUND_SUMMARY) {
+    console.log(`Utilisation of the sheet(s): ${utilisation.toFixed(2)}%`);
+  }
 
   return { placements: allplacements, fitness: fitness, area: sheetarea, totalarea: totalsheetarea, mergedLength: totalMerged, utilisation: utilisation };
 }
@@ -2706,5 +2719,7 @@ function analyzeParts(parts, averageHoleArea, config) {
 
 // clipperjs uses alerts for warnings
 function alert(message) {
-  console.log('alert: ', message);
+  if (LOG_BACKGROUND) {
+    console.log('alert: ', message);
+  }
 }

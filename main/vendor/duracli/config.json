@@ -1,0 +1,80 @@
+{
+    "project_root": "P:\\Projet\\blender\\",
+    "search_paths": [
+        "I:\\Produits\\",
+        "I:\\QUINCAILLERIES\\",
+        "I:\\CODIFICATIONS\\"
+    ],
+    "stp_output_path": "{ROOT}stp",
+    "image_output_path": "{ROOT}asm\\images",
+    "cli_exe_name": "duracli.exe",
+    "project_root_path": "P:\\Projet\\blender\\",
+    "wc_api_url": "https://durabac.info/wp-json/wc/v3/",
+    "wp_api_url": "https://durabac.info/wp-json/wp/v2/",
+    "auth": [
+        "adminx",
+        "I4A5isJuvmjyCDjtgoaVFDIV"
+    ],
+	"update": {
+		"manifest_path": "{ROOT}addons\\UltraCli\\manifest.json",
+		"zip_path": "{ROOT}addons\\UltraCli\\ultracli.zip",
+		"hard_zip_path": "{ROOT}addons\\UltraCli\\ultracli_hard.zip"		
+	},
+    "number": "",
+    "step_files": {
+        "path": "{ROOT}stp",
+        "file": "{number}.stp",
+        "glb_filepath_template": "{ROOT}output\\glb\\{number}.glb",
+        "collection_name_template": "{number}",
+        "plane_name": "tapis"
+    },
+	"cli_tasks": {
+	  "stp":   { "asm": "asmstp",  "par": "parstp",  "psm": "psmstp" },
+	  "image": { "asm": "asmimage","par": "parimage","psm": "psmimage" }
+	},
+    "bom_files": {
+        "path": "{ROOT}Output/BOM/"
+    },
+    "addon": {
+        "module_name": "STEPper",
+		"path_stepper": "{ROOT}addons\\dep\\stepper.zip" 
+    },
+    "kit": {
+        "folder_path": "P:\\Projet\\blender\\asm\\kit\\"
+    },
+    "erp": {
+        "path_template_img": "{ROOT}asm\\images\\",
+        "path_template_child_img": "{ROOT}output\\img\\final\\"
+    },
+    "import": {
+        "template-filepath": "P:\\Projet\\blender\\"
+    },
+    "asm-root": {
+        "asm-filepath": "P:\\Projet\\blender\\asm\\"
+    },
+    "webp_files": {
+        "path_template": "{ROOT}\\asm\\images\\**\\{number}.webp"
+    },
+    "image": {
+        "image_filepath": "{ROOT}asm\\images\\etiquettage\\{code}{ext}"
+    },
+    "glb_files": {
+        "path": "{ROOT}output\\glb",
+        "path-out": "{ROOT}output\\glb\\",
+        "file": "{number}.glb",
+        "glb_filepath_template": "{ROOT}output\\glb\\{number}.glb",
+        "json": "{ROOT}output\\glb\\{sku}_meta.json",
+        "collection_name_template": "{number}",
+        "plane_name": "tapis"
+    },
+    "png_processing": {
+        "input_folder": "{ROOT}output\\img\\",
+        "output_subdir": "final"
+    },
+    "png_files": {
+        "file": "{number}.png",
+        "png_filepath_export": "{ROOT}output\\img\\{number}.png",
+        "collection_name_template": "{number}",
+        "output_folder": "{ROOT}output\\img\\final\\"
+    }
+}

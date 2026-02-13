@@ -8,13 +8,35 @@ const { loadPresets, savePreset, deletePreset } = require("./presets");
 const NotificationService = require('./notification-service');
 require("events").EventEmitter.defaultMaxListeners = 30;
 
+function configureDuraCliPath() {
+  if (process.env.DURA_CLI_PATH && fs.existsSync(process.env.DURA_CLI_PATH)) {
+    return;
+  }
+
+  const bundledDuraCliPath = path.join(
+    __dirname,
+    "main",
+    "vendor",
+    "duracli",
+    "duracli.exe"
+  );
+
+  if (fs.existsSync(bundledDuraCliPath)) {
+    process.env.DURA_CLI_PATH = bundledDuraCliPath;
+  }
+}
+
+configureDuraCliPath();
+
 app.on('render-process-gone', (event, webContents, details) => { console.error('Render process gone:', event, webContents, details); });
 
 remote.initialize();
 
 app.commandLine.appendSwitch("--enable-precise-memory-info");
 crashReporter.start({ uploadToServer : false });
-console.log(crashReporter.getLastCrashReport());
+if (process.env["deepnest_debug"] === "1") {
+  console.log(crashReporter.getLastCrashReport());
+}
 
 /*
 // main menu for mac
@@ -63,7 +85,11 @@ Menu.setApplicationMenu(menu);
 let mainWindow = null;
 let notificationWindow = null;
 var backgroundWindows = [];
+var backgroundQueue = [];
 const notificationService = new NotificationService();
+const LOG_BACKGROUND_IPC =
+  process.env["deepnest_debug"] === "1" ||
+  process.env["DEEPNEST_BG_LOG"] === "1";
 
 // single instance
 const gotTheLock = app.requestSingleInstanceLock();
@@ -239,6 +265,7 @@ function createBackgroundWindows() {
     );
 
     backgroundWindows[winCount] = back;
+    backgroundWindows[winCount].isBusy = false;
 
     back.once("ready-to-show", () => {
       //back.show();
@@ -248,6 +275,31 @@ function createBackgroundWindows() {
     back.webContents.on('render-process-gone', (event, details) => { console.error('Render process gone:', event, details); });
     back.on('render-process-gone', (event) => { console.error('Render process gone:', event); });
   }
+}
+
+function dispatchBackgroundJob(payload) {
+  for (var i = 0; i < backgroundWindows.length; i++) {
+    var worker = backgroundWindows[i];
+    if (!worker) {
+      continue;
+    }
+
+    try {
+      if (worker.isDestroyed && worker.isDestroyed()) {
+        continue;
+      }
+    } catch (ex) {
+      continue;
+    }
+
+    if (!worker.isBusy) {
+      worker.isBusy = true;
+      worker.webContents.send("background-start", payload);
+      return true;
+    }
+  }
+
+  return false;
 }
 
 // This method will be called when Electron has finished
@@ -300,13 +352,13 @@ app.on("before-quit", function () {
 //ipcMain.on('background-start', (event, payload) => backgroundWindows[0].webContents.send('background-start', payload));
 
 ipcMain.on("background-start", function (event, payload) {
-  console.log("starting background!");
-  for (var i = 0; i < backgroundWindows.length; i++) {
-    if (backgroundWindows[i] && !backgroundWindows[i].isBusy) {
-      backgroundWindows[i].isBusy = true;
-      backgroundWindows[i].webContents.send("background-start", payload);
-      break;
+  if (!dispatchBackgroundJob(payload)) {
+    backgroundQueue.push(payload);
+    if (LOG_BACKGROUND_IPC) {
+      console.log("background queued", backgroundQueue.length);
     }
+  } else if (LOG_BACKGROUND_IPC) {
+    console.log("background dispatched");
   }
 });
 
@@ -317,6 +369,14 @@ ipcMain.on("background-response", function (event, payload) {
       if (backgroundWindows[i].webContents == event.sender) {
         mainWindow.webContents.send("background-response", payload);
         backgroundWindows[i].isBusy = false;
+
+        if (backgroundQueue.length > 0) {
+          const nextPayload = backgroundQueue.shift();
+          if (!dispatchBackgroundJob(nextPayload)) {
+            // If dispatch fails unexpectedly, keep payload queued for the next response tick.
+            backgroundQueue.unshift(nextPayload);
+          }
+        }
         break;
       }
     } catch (ex) {
@@ -335,6 +395,7 @@ ipcMain.on("background-progress", function (event, payload) {
 });
 
 ipcMain.on("background-stop", function (event) {
+  backgroundQueue = [];
   for (var i = 0; i < backgroundWindows.length; i++) {
     if (backgroundWindows[i]) {
       backgroundWindows[i].destroy();
@@ -345,7 +406,9 @@ ipcMain.on("background-stop", function (event) {
 
   createBackgroundWindows();
 
-  console.log("stopped!", backgroundWindows);
+  if (LOG_BACKGROUND_IPC) {
+    console.log("background stopped");
+  }
 });
 
 // Backward compat with https://electron-settings.js.org/index.html#configure

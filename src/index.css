@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+/* ===== Custom Fonts ===== */
+@font-face {
+  font-family: "LatoLatinWeb";
+  src: url("../main/font/fonts/latolatin-regular.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "LatoLatinWebLight";
+  src: url("../main/font/fonts/latolatin-light.woff2") format("woff2");
+  font-weight: 300;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "LatoLatinWebHairline";
+  src: url("../main/font/fonts/latolatin-hairline.woff2") format("woff2");
+  font-weight: 100;
+  font-style: normal;
+}
+
+/* ===== CSS Custom Properties ===== */
+:root {
+  --nav-width: 4.375em;
+}
+
+/* ===== Base Theme Layer ===== */
+@theme {
+  --color-dn-primary: #24c7ed;
+  --color-dn-primary-hover: #3eddf7;
+  --color-dn-dark: #404247;
+  --color-dn-darker: #242526;
+  --color-dn-darkest: #1a1a1a;
+  --color-dn-light: #f5f7f9;
+  --color-dn-border: #e2e8ed;
+  --color-dn-text: #404247;
+  --color-dn-text-muted: #818489;
+  --color-dn-input-bg: #e2e8ed;
+  --color-dn-input-border: #c8cedb;
+  --color-dn-table-hover: #f5f7f9;
+  --color-dn-danger: #ec2158;
+  --color-dn-success: #27ae60;
+}
+
+/* ===== Global Reset ===== */
+* {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+select,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+body {
+  font-family: "LatoLatinWeb", helvetica, arial, verdana, sans-serif;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+/* ===== Nest SVG Styles (kept for imperative SVG rendering) ===== */
+#nestsvg .part {
+  display: none;
+}
+
+#nestsvg .part.active {
+  display: block;
+}
+
+#nestsvg .sheet {
+  display: none;
+}
+
+#nestsvg .sheet.active {
+  display: block;
+}
+
+#nestsvg .merged {
+  stroke: transparent;
+  stroke-width: 2;
+  transition: stroke 1.5s ease;
+}
+
+#nestsvg .merged.active {
+  stroke: #ec2158;
+}
+
+/* ===== SVG Pan Zoom Override ===== */
+.import svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* ===== Progress circle animation ===== */
+@keyframes progress-spin {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.progress-circle .bar {
+  stroke-dasharray: 111;
+  stroke-dashoffset: 111;
+  animation: progress-spin 2s linear infinite;
+}
+
+/* ===== Scrollbar styling ===== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c8cedb;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #505050;
+}
+
+/* ===== Electron drag region ===== */
+.electron-drag {
+  -webkit-app-region: drag;
+}
+
+.electron-no-drag {
+  -webkit-app-region: no-drag;
+}

@@ -1,6 +1,6 @@
 /**
  * Import Service
- * Handles SVG/DXF/DWG file import with conversion server API
+ * Handles SVG/DXF/DWG/ASM/PSM file import with conversion APIs
  * Manages file selection, reading, and conversion workflow
  */
 
@@ -63,6 +63,10 @@ interface FileSystem {
     callback: (err: Error | null, data: string) => void
   ): void;
   readdirSync(path: string): string[];
+  existsSync(path: string): boolean;
+  mkdtempSync(prefix: string): string;
+  rmSync(path: string, options: { recursive: boolean; force: boolean }): void;
+  writeFileSync(path: string, data: string): void;
 }
 
 /**
@@ -72,6 +76,54 @@ interface PathModule {
   extname(path: string): string;
   basename(path: string): string;
   dirname(path: string): string;
+  isAbsolute(path: string): boolean;
+  join(...paths: string[]): string;
+}
+
+/**
+ * Child process execution error
+ */
+interface ExecFileError extends Error {
+  code?: number | string;
+}
+
+/**
+ * Child process module interface
+ */
+interface ChildProcessModule {
+  execFile(
+    file: string,
+    args: string[],
+    options: { windowsHide: boolean; maxBuffer: number },
+    callback: (
+      error: ExecFileError | null,
+      stdout: string,
+      stderr: string
+    ) => void
+  ): void;
+}
+
+/**
+ * OS module interface
+ */
+interface OsModule {
+  tmpdir(): string;
+}
+
+/**
+ * DuraCLI manifest output
+ */
+interface DuraCliManifest {
+  parts?: Array<{
+    svgPath?: string;
+  }>;
+  failedParts?: Array<{
+    partNumber?: string;
+    sourceFile?: string;
+    error?: string;
+  }>;
+  warnings?: string[];
+  errors?: string[];
 }
 
 /**
@@ -132,6 +184,7 @@ interface ConfigGetter {
  */
 const SUPPORTED_EXTENSIONS = {
   SVG: [".svg"],
+  NEEDS_DURA_CLI: [".asm", ".psm"],
   NEEDS_CONVERSION: [".ps", ".eps", ".dxf", ".dwg"],
 } as const;
 
@@ -139,10 +192,22 @@ const SUPPORTED_EXTENSIONS = {
  * File filters for the open dialog
  */
 const FILE_FILTERS: FileFilter[] = [
-  { name: "CAD formats", extensions: ["svg", "ps", "eps", "dxf", "dwg"] },
+  {
+    name: "CAD formats",
+    extensions: ["svg", "ps", "eps", "dxf", "dwg", "asm", "psm"],
+  },
+  { name: "Solid Edge (via duraCLI)", extensions: ["asm", "psm"] },
   { name: "SVG/EPS/PS", extensions: ["svg", "eps", "ps"] },
   { name: "DXF/DWG", extensions: ["dxf", "dwg"] },
 ];
+
+const DURA_CLI_DEFAULT_PATH = "duracli.exe";
+const DURA_CLI_OUTPUT_PREFIX = "deepnest-duracli-";
+const DURA_CLI_COMMAND = "setodeepnest";
+const DURA_CLI_MANIFEST_ENV_PREFIX = "DEEPNEST_MANIFEST=";
+const DURA_CLI_DEBUG_ENV = "DEEPNEST_DURACLI_DEBUG";
+const DURA_CLI_RUN_LOG = "duracli-run.log";
+const DURA_CLI_LAST_RUN_LOG = "duracli-last-run.log";
 
 /**
  * Import Service class
@@ -167,6 +232,12 @@ export class ImportService {
 
   /** FormData constructor for file upload */
   private FormData: FormDataConstructor | null = null;
+
+  /** Child process module for duraCLI execution */
+  private childProcess: ChildProcessModule | null = null;
+
+  /** OS module for temp directory handling */
+  private os: OsModule | null = null;
 
   /** SVG pre-processor for cleaning input */
   private svgPreProcessor: SvgPreProcessor | null = null;
@@ -203,6 +274,8 @@ export class ImportService {
     path?: PathModule;
     httpClient?: HttpClient;
     FormData?: FormDataConstructor;
+    childProcess?: ChildProcessModule;
+    os?: OsModule;
     svgPreProcessor?: SvgPreProcessor;
     config?: ConfigGetter;
     deepNest?: DeepNestInstance;
@@ -218,6 +291,8 @@ export class ImportService {
       this.path = options.path || null;
       this.httpClient = options.httpClient || null;
       this.FormData = options.FormData || null;
+      this.childProcess = options.childProcess || null;
+      this.os = options.os || null;
       this.svgPreProcessor = options.svgPreProcessor || null;
       this.config = options.config || null;
       this.deepNest = options.deepNest || null;
@@ -274,6 +349,22 @@ export class ImportService {
    */
   setFormDataConstructor(FormData: FormDataConstructor): void {
     this.FormData = FormData;
+  }
+
+  /**
+   * Set the child process module
+   * @param childProcess - Node.js child_process module
+   */
+  setChildProcess(childProcess: ChildProcessModule): void {
+    this.childProcess = childProcess;
+  }
+
+  /**
+   * Set the OS module
+   * @param os - Node.js os module
+   */
+  setOsModule(os: OsModule): void {
+    this.os = os;
   }
 
   /**
@@ -354,12 +445,557 @@ export class ImportService {
   }
 
   /**
+   * Check if a file extension requires duraCLI conversion
+   * @param extension - File extension (with leading dot)
+   * @returns True if the file needs duraCLI conversion
+   */
+  private needsDuraCliConversion(extension: string): boolean {
+    const lowerExt = extension.toLowerCase();
+    return SUPPORTED_EXTENSIONS.NEEDS_DURA_CLI.some((ext) => ext === lowerExt);
+  }
+
+  /**
    * Check if a file extension is a DXF file
    * @param extension - File extension (with leading dot)
    * @returns True if the file is a DXF
    */
   private isDxf(extension: string): boolean {
     return extension.toLowerCase() === ".dxf";
+  }
+
+  /**
+   * Resolve duraCLI executable path.
+   * Priority:
+   * 1. DURA_CLI_PATH env var
+   * 2. main/vendor/duracli/duracli.exe
+   * 3. ./duracli.exe
+   * 4. PATH lookup with "duracli.exe"
+   * @returns Executable path or name
+   */
+  private resolveDuraCliPath(): string {
+    if (!this.fs || !this.path) {
+      return DURA_CLI_DEFAULT_PATH;
+    }
+
+    const envPath = process.env.DURA_CLI_PATH?.trim();
+    if (envPath) {
+      const envCandidates = this.path.isAbsolute(envPath)
+        ? [envPath]
+        : [this.path.join(process.cwd(), envPath), envPath];
+
+      for (const candidate of envCandidates) {
+        if (this.fs.existsSync(candidate)) {
+          return candidate;
+        }
+      }
+
+      // Return the configured path even when missing, so exec errors remain explicit.
+      return envPath;
+    }
+
+    const bundledPath = this.path.join(
+      process.cwd(),
+      "main",
+      "vendor",
+      "duracli",
+      DURA_CLI_DEFAULT_PATH
+    );
+    if (this.fs.existsSync(bundledPath)) {
+      return bundledPath;
+    }
+
+    const rootPath = this.path.join(process.cwd(), DURA_CLI_DEFAULT_PATH);
+    if (this.fs.existsSync(rootPath)) {
+      return rootPath;
+    }
+
+    return DURA_CLI_DEFAULT_PATH;
+  }
+
+  /**
+   * Execute duraCLI and return process output for both success and business-level failures.
+   * Reject only when execution itself fails (missing executable, spawn error, etc.).
+   * @param executable - duraCLI executable path
+   * @param args - duraCLI arguments
+   * @returns stdout, stderr and exit code
+   */
+  private async runDuraCli(
+    executable: string,
+    args: string[]
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    if (!this.childProcess) {
+      throw new Error("Child process module not available");
+    }
+
+    return new Promise((resolve, reject) => {
+      this.childProcess!.execFile(
+        executable,
+        args,
+        { windowsHide: true, maxBuffer: 20 * 1024 * 1024 },
+        (error, stdout, stderr) => {
+          const code = typeof error?.code === "number" ? error.code : 0;
+          // Non-zero numeric exit codes are business results from duraCLI (e.g. 3 partial, 4 failed).
+          // Reject only for execution-level errors (ENOENT, EACCES, spawn issues, ...).
+          if (error && typeof error?.code !== "number") {
+            reject(
+              new Error(
+                stderr.trim() || stdout.trim() || error.message || "Unknown duraCLI error"
+              )
+            );
+            return;
+          }
+          resolve({ stdout, stderr, exitCode: code });
+        }
+      );
+    });
+  }
+
+  /**
+   * Extract manifest path from duraCLI stdout.
+   * @param stdout - duraCLI stdout
+   * @returns Manifest file path if found
+   */
+  private extractManifestPathFromOutput(stdout: string): string | null {
+    const lines = stdout.split(/\r?\n/);
+    for (const line of lines) {
+      if (line.startsWith(DURA_CLI_MANIFEST_ENV_PREFIX)) {
+        const manifestPath = line
+          .slice(DURA_CLI_MANIFEST_ENV_PREFIX.length)
+          .trim();
+        if (manifestPath.length > 0) {
+          return manifestPath;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Collect generated SVG files from duraCLI output.
+   * @param outputDirectory - Temp output directory used for run
+   * @param stdout - duraCLI stdout
+   * @returns Sorted list of SVG paths
+   */
+  private collectDuraCliSvgPaths(
+    outputDirectory: string,
+    stdout: string
+  ): string[] {
+    if (!this.fs || !this.path) {
+      return [];
+    }
+
+    const candidates = new Set<string>();
+    const stdoutManifestPath = this.extractManifestPathFromOutput(stdout);
+    const defaultManifestPath = this.path.join(outputDirectory, "deepnest_manifest.json");
+    const legacyManifestPath = this.path.join(outputDirectory, "deepnest-manifest.json");
+
+    const manifestPaths = [stdoutManifestPath, defaultManifestPath, legacyManifestPath]
+      .filter((value): value is string => !!value);
+
+    for (const manifestPath of manifestPaths) {
+      if (!this.fs.existsSync(manifestPath)) {
+        continue;
+      }
+
+      try {
+        const manifestRaw = this.fs.readFileSync(manifestPath).toString();
+        const manifest = JSON.parse(manifestRaw) as DuraCliManifest;
+
+        if (!manifest.parts) {
+          continue;
+        }
+
+        for (const part of manifest.parts) {
+          if (!part.svgPath) {
+            continue;
+          }
+          const svgPath = this.path.isAbsolute(part.svgPath)
+            ? part.svgPath
+            : this.path.join(this.path.dirname(manifestPath), part.svgPath);
+          if (this.fs.existsSync(svgPath)) {
+            candidates.add(svgPath);
+          }
+        }
+      } catch {
+        // Ignore malformed manifests and fall back to directory scan
+      }
+    }
+
+    if (candidates.size > 0) {
+      return Array.from(candidates)
+        .filter((svgPath) => this.svgHasShapeElements(svgPath))
+        .sort();
+    }
+
+    try {
+      const files = this.fs.readdirSync(outputDirectory);
+      return files
+        .filter((file) => this.path!.extname(file).toLowerCase() === ".svg")
+        .map((file) => this.path!.join(outputDirectory, file))
+        .filter((svgPath) => this.svgHasShapeElements(svgPath))
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Collect DXF files generated by duraCLI.
+   * @param outputDirectory - Temp output directory used for run
+   * @returns Sorted list of DXF paths
+   */
+  private collectDuraCliDxfPaths(outputDirectory: string): string[] {
+    if (!this.fs || !this.path) {
+      return [];
+    }
+
+    try {
+      const files = this.fs.readdirSync(outputDirectory);
+      return files
+        .filter((file) => this.path!.extname(file).toLowerCase() === ".dxf")
+        .filter((file) => !file.toLowerCase().endsWith("_fail.dxf"))
+        .map((file) => this.path!.join(outputDirectory, file))
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Return current imported parts count.
+   * @returns Number of parts currently known by DeepNest
+   */
+  private getImportedPartCount(): number {
+    return this.deepNest?.parts?.length ?? 0;
+  }
+
+  /**
+   * Import all SVG paths and return how many files produced new parts.
+   * @param svgPaths - Full SVG paths
+   * @returns Number of SVG files that produced at least one part
+   */
+  private async importDuraCliSvgPaths(svgPaths: string[]): Promise<number> {
+    let importedSvgFiles = 0;
+
+    for (const svgPath of svgPaths) {
+      const before = this.getImportedPartCount();
+      await this.readSvgFile(svgPath);
+      const after = this.getImportedPartCount();
+      if (after > before) {
+        importedSvgFiles++;
+      }
+    }
+
+    return importedSvgFiles;
+  }
+
+  /**
+   * Fallback path: convert duraCLI DXF outputs using DeepNest converter.
+   * @param dxfPaths - Full DXF paths
+   * @returns Number of DXF files that produced at least one part
+   */
+  private async importDuraCliDxfFallback(dxfPaths: string[]): Promise<number> {
+    if (!this.path) {
+      return 0;
+    }
+
+    let importedDxfFiles = 0;
+    for (const dxfPath of dxfPaths) {
+      const filename = this.path.basename(dxfPath);
+      const before = this.getImportedPartCount();
+      await this.convertAndImport(dxfPath, filename, ".dxf");
+      const after = this.getImportedPartCount();
+      if (after > before) {
+        importedDxfFiles++;
+      }
+    }
+
+    return importedDxfFiles;
+  }
+
+  /**
+   * Basic SVG geometry check used to ignore empty converter outputs.
+   * @param svgPath - Full path to SVG file
+   * @returns True if known shape elements are present
+   */
+  private svgHasShapeElements(svgPath: string): boolean {
+    if (!this.fs) {
+      return false;
+    }
+
+    try {
+      const svgRaw = this.fs.readFileSync(svgPath).toString();
+      return /<(path|polygon|polyline|rect|circle|ellipse|line)\b/i.test(svgRaw);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Check whether a DXF has an empty ENTITIES section.
+   * @param dxfPath - Full path to DXF file
+   * @returns True when ENTITIES is immediately followed by ENDSEC
+   */
+  private dxfHasEmptyEntities(dxfPath: string): boolean {
+    if (!this.fs) {
+      return false;
+    }
+
+    try {
+      const dxfRaw = this.fs.readFileSync(dxfPath).toString();
+      return /ENTITIES\s*\r?\n\s*0\s*\r?\nENDSEC/i.test(dxfRaw);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Build diagnostics from duraCLI output folder contents.
+   * @param outputDirectory - Temp output directory used for conversion
+   * @param manifestPath - Requested manifest path
+   * @returns Human-readable diagnostics
+   */
+  private collectDuraCliDiagnostics(
+    outputDirectory: string,
+    manifestPath: string
+  ): string[] {
+    if (!this.fs || !this.path) {
+      return [];
+    }
+
+    const diagnostics: string[] = [];
+    const legacyManifestPath = this.path.join(outputDirectory, "deepnest-manifest.json");
+    if (!this.fs.existsSync(manifestPath) && !this.fs.existsSync(legacyManifestPath)) {
+      diagnostics.push("Manifest file was not generated by duraCLI.");
+    }
+
+    try {
+      const files = this.fs.readdirSync(outputDirectory);
+      const dxfPaths = files
+        .filter((file) => this.path!.extname(file).toLowerCase() === ".dxf")
+        .map((file) => this.path!.join(outputDirectory, file));
+      const svgPaths = files
+        .filter((file) => this.path!.extname(file).toLowerCase() === ".svg")
+        .map((file) => this.path!.join(outputDirectory, file));
+
+      if (dxfPaths.length > 0) {
+        const emptyEntityCount = dxfPaths.filter((file) => this.dxfHasEmptyEntities(file)).length;
+        if (emptyEntityCount === dxfPaths.length) {
+          diagnostics.push(`All ${dxfPaths.length} DXF files have an empty ENTITIES section.`);
+        }
+      }
+
+      if (svgPaths.length > 0) {
+        const svgWithShapesCount = svgPaths.filter((file) => this.svgHasShapeElements(file)).length;
+        if (svgWithShapesCount === 0) {
+          diagnostics.push(`All ${svgPaths.length} SVG files are empty (no path/polyline geometry).`);
+        }
+      }
+    } catch {
+      // Ignore diagnostics gathering failures
+    }
+
+    return diagnostics;
+  }
+
+  /**
+   * Write a durable log file for duraCLI runs.
+   * @param outputDirectory - Temporary or debug output folder
+   * @param executable - duraCLI executable used
+   * @param args - duraCLI arguments
+   * @param stdout - stdout content
+   * @param stderr - stderr content
+   * @param manifest - Parsed manifest, if available
+   */
+  private writeDuraCliRunLog(
+    outputDirectory: string,
+    executable: string,
+    args: string[],
+    stdout: string,
+    stderr: string,
+    manifest: DuraCliManifest | null
+  ): void {
+    if (!this.fs || !this.path) {
+      return;
+    }
+
+    const commandPreview = [executable, ...args.map((a) => `"${a}"`)].join(" ");
+    const manifestSummary = manifest
+      ? JSON.stringify(
+        {
+          parts: manifest.parts?.length ?? 0,
+          failedParts: manifest.failedParts?.length ?? 0,
+          warnings: manifest.warnings?.length ?? 0,
+          errors: manifest.errors?.length ?? 0,
+        },
+        null,
+        2
+      )
+      : "null";
+
+    const content = [
+      `command=${commandPreview}`,
+      "",
+      `manifestSummary=${manifestSummary}`,
+      "",
+      "stdout:",
+      stdout || "<empty>",
+      "",
+      "stderr:",
+      stderr || "<empty>",
+    ].join("\n");
+
+    const logPath = this.path.join(outputDirectory, DURA_CLI_RUN_LOG);
+    this.fs.writeFileSync(logPath, content);
+
+    // Keep a stable "last run" log in the bundled duraCLI folder for quick troubleshooting.
+    try {
+      const stableLogPath = this.path.join(
+        process.cwd(),
+        "main",
+        "vendor",
+        "duracli",
+        DURA_CLI_LAST_RUN_LOG
+      );
+      this.fs.writeFileSync(stableLogPath, content);
+    } catch {
+      // Ignore when bundled path is unavailable; temp-folder log is still written.
+    }
+  }
+
+  /**
+   * Read and parse duraCLI manifest if available.
+   * @param manifestPath - Full path to manifest JSON file
+   * @returns Parsed manifest or null
+   */
+  private readDuraCliManifest(manifestPath: string): DuraCliManifest | null {
+    if (!this.fs) {
+      return null;
+    }
+
+    if (!this.fs.existsSync(manifestPath)) {
+      return null;
+    }
+
+    try {
+      const manifestRaw = this.fs.readFileSync(manifestPath).toString();
+      return JSON.parse(manifestRaw) as DuraCliManifest;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Convert Solid Edge files to SVG using duraCLI and import all generated SVG files.
+   * @param filePath - Full path to the selected assembly/part
+   * @param ext - File extension
+   */
+  private async convertWithDuraCli(filePath: string): Promise<void> {
+    if (!this.fs || !this.path || !this.childProcess || !this.os) {
+      message("Required modules not available for Solid Edge conversion", true);
+      return;
+    }
+
+    const duracliPath = this.resolveDuraCliPath();
+    const outputDirectory = this.fs.mkdtempSync(
+      this.path.join(this.os.tmpdir(), DURA_CLI_OUTPUT_PREFIX)
+    );
+    const manifestPath = this.path.join(outputDirectory, "deepnest_manifest.json");
+    const units = this.config?.getSync("units") === "inch" ? "inch" : "mm";
+    const args = [
+      DURA_CLI_COMMAND,
+      filePath,
+      "--out",
+      outputDirectory,
+      "--manifest",
+      manifestPath,
+      "--units",
+      units,
+    ];
+    let keepOutput = process.env[DURA_CLI_DEBUG_ENV] === "1";
+
+    try {
+      const runResult = await this.runDuraCli(duracliPath, args);
+      const manifest = this.readDuraCliManifest(manifestPath);
+      this.writeDuraCliRunLog(
+        outputDirectory,
+        duracliPath,
+        args,
+        runResult.stdout,
+        runResult.stderr,
+        manifest
+      );
+      const svgPaths = this.collectDuraCliSvgPaths(outputDirectory, runResult.stdout);
+      const dxfPaths = this.collectDuraCliDxfPaths(outputDirectory);
+      const failedPartsCount = manifest?.failedParts?.length ?? 0;
+      const warningCount = manifest?.warnings?.length ?? 0;
+      const errorCount = manifest?.errors?.length ?? 0;
+      let importedSvgFiles = 0;
+      let importedDxfFiles = 0;
+
+      if (svgPaths.length > 0) {
+        importedSvgFiles = await this.importDuraCliSvgPaths(svgPaths);
+      }
+
+      // Optional fallback requested for "DXF-only" duraCLI pipelines.
+      if (importedSvgFiles === 0 && dxfPaths.length > 0) {
+        importedDxfFiles = await this.importDuraCliDxfFallback(dxfPaths);
+      }
+
+      const importedFiles = importedSvgFiles + importedDxfFiles;
+      if (importedFiles === 0) {
+        let issueDetail = "";
+        const firstIssue = manifest?.errors?.[0]
+          || manifest?.warnings?.[0]
+          || manifest?.failedParts?.[0]?.error;
+        if (firstIssue) {
+          issueDetail = `<br>duraCLI: ${firstIssue}`;
+        }
+        const diagnostics = this.collectDuraCliDiagnostics(outputDirectory, manifestPath);
+        if (diagnostics.length > 0) {
+          issueDetail += `<br>${diagnostics.join("<br>")}`;
+        }
+        issueDetail += `<br>Exit code: ${runResult.exitCode}; imported SVG: ${importedSvgFiles}; imported DXF fallback: ${importedDxfFiles}; failed parts: ${failedPartsCount}; warnings: ${warningCount}; errors: ${errorCount}`;
+        keepOutput = true;
+        message(
+          `duraCLI completed without usable SVG output.${issueDetail}<br>Debug folder: ${outputDirectory}`,
+          true
+        );
+        return;
+      }
+
+      const hasPartialIssues =
+        failedPartsCount > 0 ||
+        warningCount > 0 ||
+        errorCount > 0 ||
+        runResult.exitCode !== 0;
+
+      if (hasPartialIssues) {
+        keepOutput = true;
+        message(
+          `duraCLI partial conversion: imported ${importedFiles} file(s) (SVG ${importedSvgFiles}, DXF fallback ${importedDxfFiles}), failed ${failedPartsCount}, warnings ${warningCount}, errors ${errorCount}.<br>Debug folder: ${outputDirectory}`,
+          true
+        );
+      }
+    } catch (err) {
+      const error = err as Error;
+      keepOutput = true;
+      const bundledPath = this.path.join(
+        process.cwd(),
+        "main",
+        "vendor",
+        "duracli",
+        DURA_CLI_DEFAULT_PATH
+      );
+      message(
+        `Could not execute duraCLI conversion: ${error.message}<br>Resolved executable: ${duracliPath}<br>Expected command: ${DURA_CLI_DEFAULT_PATH} ${DURA_CLI_COMMAND} &lt;asmOrPsmPath&gt; --out ... --manifest ... --units mm|inch<br>Set DURA_CLI_PATH or place duraCLI in: ${bundledPath}<br>Debug folder: ${outputDirectory}`,
+        true
+      );
+    } finally {
+      if (!keepOutput) {
+        this.fs.rmSync(outputDirectory, { recursive: true, force: true });
+      }
+    }
   }
 
   /**
@@ -440,6 +1076,8 @@ export class ImportService {
 
     if (ext.toLowerCase() === ".svg") {
       await this.readSvgFile(filePath);
+    } else if (this.needsDuraCliConversion(ext)) {
+      await this.convertWithDuraCli(filePath);
     } else if (this.needsConversion(ext)) {
       await this.convertAndImport(filePath, filename, ext);
     }
@@ -615,8 +1253,20 @@ export class ImportService {
       return;
     }
 
-    // Import the SVG into DeepNest
-    this.deepNest.importsvg(filename, dirpath, data, scalingFactor, dxfFlag);
+    const importedParts = this.deepNest.importsvg(
+      filename,
+      dirpath,
+      data,
+      scalingFactor,
+      dxfFlag
+    );
+
+    if (!importedParts || importedParts.length === 0) {
+      message(
+        `No closed contours were detected in ${filename}. The file was loaded but produced no nestable parts.`,
+        true
+      );
+    }
 
     // Deselect all previous imports
     this.deepNest.imports.forEach((im) => {

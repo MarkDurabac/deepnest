@@ -1,0 +1,17 @@
+{
+  "searchPaths": [
+    "I:\\Produits\\",
+    "I:\\QUINCAILLERIES\\",
+    "I:\\CODIFICATIONS\\"
+  ],
+  "excludedDirs": [
+    "archives",
+    "archive",
+    "000",
+    "test"
+  ],
+  "excludedKeywords": [
+    "test",
+    "dessin"
+  ]
+}

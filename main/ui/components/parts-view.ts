@@ -331,7 +331,8 @@ export class PartsViewService {
       `#import-${importIndex} .zoomreset`
     );
 
-    if (zoomInBtn) {
+    if (zoomInBtn && zoomInBtn.dataset.bound !== "1") {
+      zoomInBtn.dataset.bound = "1";
       zoomInBtn.addEventListener("click", (ev) => {
         ev.preventDefault();
         const selectedImport = deepNest.imports.find((e) => e.selected);
@@ -341,7 +342,8 @@ export class PartsViewService {
       });
     }
 
-    if (zoomOutBtn) {
+    if (zoomOutBtn && zoomOutBtn.dataset.bound !== "1") {
+      zoomOutBtn.dataset.bound = "1";
       zoomOutBtn.addEventListener("click", (ev) => {
         ev.preventDefault();
         const selectedImport = deepNest.imports.find((e) => e.selected);
@@ -351,7 +353,8 @@ export class PartsViewService {
       });
     }
 
-    if (zoomResetBtn) {
+    if (zoomResetBtn && zoomResetBtn.dataset.bound !== "1") {
+      zoomResetBtn.dataset.bound = "1";
       zoomResetBtn.addEventListener("click", (ev) => {
         ev.preventDefault();
         const selectedImport = deepNest.imports.find((e) => e.selected);
@@ -401,6 +404,11 @@ export class PartsViewService {
     );
 
     headers.forEach((header) => {
+      if (header.dataset.sortBound === "1") {
+        return;
+      }
+      header.dataset.sortBound = "1";
+
       header.addEventListener("click", () => {
         const sortField = header.getAttribute(
           DATA_ATTRIBUTES.SORT_FIELD

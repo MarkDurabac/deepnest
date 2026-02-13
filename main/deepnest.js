@@ -24,6 +24,10 @@ var config = {
   overlapTolerance: 0.0001,
 };
 
+const LOG_BACKGROUND_IPC =
+  process.env["deepnest_debug"] === "1" ||
+  process.env["DEEPNEST_BG_LOG"] === "1";
+
 export class DeepNest {
   constructor(eventEmitter) {
     var svg = null;
@@ -50,7 +54,77 @@ export class DeepNest {
     this.nests = [];
 
     this.eventEmitter = eventEmitter;
+    this.onBackgroundResponse = (_event, payload) => {
+      this.handleBackgroundResponse(payload);
+    };
+    this.eventEmitter.on("background-response", this.onBackgroundResponse);
   }
+
+  handleBackgroundResponse(payload) {
+    this.eventEmitter.send("setPlacements", payload);
+    if (LOG_BACKGROUND_IPC) {
+      console.log("ipc response", payload);
+    }
+    if (!this.GA) {
+      // user might have quit while we're away
+      return;
+    }
+    this.GA.population[payload.index].processing = false;
+    this.GA.population[payload.index].fitness = payload.fitness;
+
+    // render placement
+    if (this.nests.length == 0 || this.nests[0].fitness > payload.fitness) {
+      this.nests.unshift(payload);
+
+      // Check if we should keep a long list (more than 100 results)
+      const keepLongList = process.env.DEEPNEST_LONGLIST;
+
+      if (keepLongList) {
+        // Keep up to 100 results without sorting
+        if (this.nests.length > 100) {
+          this.nests.pop();
+        }
+      } else {
+        // Original behavior - keep only top 10 by fitness
+        if (this.nests.length > 10) {
+          this.nests.pop();
+        }
+      }
+
+      if (this.displayCallback) {
+        this.displayCallback();
+      }
+    } else if (process.env.DEEPNEST_LONGLIST) {
+      // With DEEPNEST_LONGLIST, we add the result to the list regardless of fitness
+      // Just make sure it's not worse than the worst result we already have
+      const worstFitness = Math.min(...this.nests.map(item => item.fitness));
+      if (this.nests.length < 100 || payload.fitness > worstFitness) {
+        // Find where to insert this result to maintain insertion order
+        this.nests.push(payload);
+
+        // If we exceeded 100 results, remove the worst one
+        if (this.nests.length > 100) {
+          // Find the worst fitness
+          let worstIndex = 0;
+          let worstFitness = this.nests[0].fitness;
+
+          for (let i = 1; i < this.nests.length; i++) {
+            if (this.nests[i].fitness > worstFitness) {
+              worstIndex = i;
+              worstFitness = this.nests[i].fitness;
+            }
+          }
+
+          // Remove the worst fitness item
+          this.nests.splice(worstIndex, 1);
+        }
+
+        if (this.displayCallback) {
+          this.displayCallback();
+        }
+      }
+    }
+  };
 
   importsvg(
     filename,
@@ -1078,13 +1152,11 @@ export class DeepNest {
       }
     }
 
-    var self = this;
     this.working = true;
 
     if (!this.workerTimer) {
-      this.workerTimer = setInterval(function () {
-        self.launchWorkers.call(
-          self,
+      this.workerTimer = setInterval(() => {
+        this.launchWorkers(
           parts,
           config,
           this.progressCallback,
@@ -1093,70 +1165,6 @@ export class DeepNest {
         //progressCallback(progress);
       }, 100);
     }
-
-    this.eventEmitter.on("background-response", (event, payload) => {
-      this.eventEmitter.send("setPlacements", payload);
-      console.log("ipc response", payload);
-      if (!this.GA) {
-        // user might have quit while we're away
-        return;
-      }
-      this.GA.population[payload.index].processing = false;
-      this.GA.population[payload.index].fitness = payload.fitness;
-
-      // render placement
-      if (this.nests.length == 0 || this.nests[0].fitness > payload.fitness) {
-        this.nests.unshift(payload);
-
-        // Check if we should keep a long list (more than 100 results)
-        const keepLongList = process.env.DEEPNEST_LONGLIST;
-
-        if (keepLongList) {
-          // Keep up to 100 results without sorting
-          if (this.nests.length > 100) {
-            this.nests.pop();
-          }
-        } else {
-          // Original behavior - keep only top 10 by fitness
-          if (this.nests.length > 10) {
-            this.nests.pop();
-          }
-        }
-
-        if (this.displayCallback) {
-          this.displayCallback();
-        }
-      } else if (process.env.DEEPNEST_LONGLIST) {
-        // With DEEPNEST_LONGLIST, we add the result to the list regardless of fitness
-        // Just make sure it's not worse than the worst result we already have
-        const worstFitness = Math.min(...this.nests.map(item => item.fitness));
-        if (this.nests.length < 100 || payload.fitness > worstFitness) {
-          // Find where to insert this result to maintain insertion order
-          this.nests.push(payload);
-
-          // If we exceeded 100 results, remove the worst one
-          if (this.nests.length > 100) {
-            // Find the worst fitness
-            let worstIndex = 0;
-            let worstFitness = this.nests[0].fitness;
-
-            for (let i = 1; i < this.nests.length; i++) {
-              if (this.nests[i].fitness > worstFitness) {
-                worstIndex = i;
-                worstFitness = this.nests[i].fitness;
-              }
-            }
-
-            // Remove the worst fitness item
-            this.nests.splice(worstIndex, 1);
-          }
-
-          if (this.displayCallback) {
-            this.displayCallback();
-          }
-        }
-      }
-    });
   };
 
   padNumber(n, width, z) {
@@ -1234,7 +1242,9 @@ export class DeepNest {
     }
 
     if (finished) {
-      console.log("new generation!");
+      if (LOG_BACKGROUND_IPC) {
+        console.log("new generation!");
+      }
       // all individuals have been evaluated, start next generation
       this.GA.generation();
     }

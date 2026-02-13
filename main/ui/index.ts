@@ -122,7 +122,26 @@ let electronRemote: { dialog: { showOpenDialog: unknown; showSaveDialogSync: unk
 let fs: unknown;
 let FormData: new () => unknown;
 let axios: { default: { post: unknown } };
-let path: { extname: (p: string) => string; basename: (p: string) => string; dirname: (p: string) => string };
+let path: {
+  extname: (p: string) => string;
+  basename: (p: string) => string;
+  dirname: (p: string) => string;
+  isAbsolute: (p: string) => boolean;
+  join: (...paths: string[]) => string;
+};
+let childProcess: {
+  execFile: (
+    file: string,
+    args: string[],
+    options: { windowsHide: boolean; maxBuffer: number },
+    callback: (
+      error: Error | null,
+      stdout: string,
+      stderr: string
+    ) => void
+  ) => void;
+};
+let os: { tmpdir: () => string };
 let svgPreProcessor: { loadSvgString: (svg: string, scale: number) => { success: boolean; result: string } };
 
 /**
@@ -642,10 +661,27 @@ function initializeComponents(): void {
   importService = createImportService({
     dialog: electronRemote.dialog as unknown as { showOpenDialog: (options: unknown) => Promise<{ canceled: boolean; filePaths: string[] }> },
     remote: electronRemote as unknown as { getGlobal: (name: string) => string | undefined },
-    fs: fs as unknown as { readFileSync: (path: string) => Buffer; readFile: (path: string, encoding: string, callback: (err: Error | null, data: string) => void) => void; readdirSync: (path: string) => string[] },
+    fs: fs as unknown as {
+      readFileSync: (path: string) => Buffer;
+      readFile: (
+        path: string,
+        encoding: string,
+        callback: (err: Error | null, data: string) => void
+      ) => void;
+      readdirSync: (path: string) => string[];
+      existsSync: (path: string) => boolean;
+      mkdtempSync: (prefix: string) => string;
+      rmSync: (
+        path: string,
+        options: { recursive: boolean; force: boolean }
+      ) => void;
+      writeFileSync: (path: string, data: string) => void;
+    },
     path: path,
     httpClient: axios.default as unknown as { post: (url: string, data: Buffer, options: { headers: Record<string, string>; responseType: string }) => Promise<{ data: string }> },
     FormData: FormData as unknown as new () => { append: (name: string, value: Buffer | string, options?: { filename?: string; contentType?: string }) => void; getBuffer: () => Buffer; getHeaders: () => Record<string, string> },
+    childProcess: childProcess,
+    os: os,
     svgPreProcessor: svgPreProcessor,
     config: configService as unknown as { getSync: <K extends keyof UIConfig>(key?: K) => K extends keyof UIConfig ? UIConfig[K] : UIConfig },
     deepNest: getDeepNest(),
@@ -771,6 +807,8 @@ async function initialize(): Promise<void> {
   FormData = require("form-data") as typeof FormData;
   axios = require("axios") as typeof axios;
   path = require("path") as typeof path;
+  childProcess = require("node:child_process") as typeof childProcess;
+  os = require("os") as typeof os;
   svgPreProcessor = require("@deepnest/svg-preprocessor") as typeof svgPreProcessor;
 
   // Disable Ractive debug mode
