@@ -459,7 +459,7 @@ export function HomePage() {
                   : "Select all"}
               </button>
               <span class="ml-auto rounded-md border border-dn-border/80 bg-white/80 px-2 py-1 text-[11px] text-dn-text-muted dark:border-white/10 dark:bg-black/30 dark:text-gray-300">
-                Shortcuts: Ctrl+I import, Ctrl+Enter nest, Del delete
+                Shortcuts: Ctrl+K commands, Ctrl+I import, Ctrl+Enter nest, Del delete
               </span>
             </div>
 

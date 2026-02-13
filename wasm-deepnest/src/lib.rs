@@ -685,21 +685,10 @@ fn inner_nfp_regions(
 
     let filtered = retain_regions_with_valid_anchor(out, container, part, &[], scale, fill_rule)?;
     if filtered.is_empty() {
-        // Keep fallback behavior if filtering was too strict.
-        // This preserves continuity while still trying to reject obvious invalid regions first.
-        let fallback = inner_nfp_regions_fallback(container, part, scale)?;
-        return retain_regions_with_valid_anchor(fallback, container, part, &[], scale, fill_rule);
+        // Do not fall back to frame approximation in strict-compat mode.
+        return Ok(Vec::new());
     }
     Ok(filtered)
-}
-
-fn inner_nfp_regions_fallback(
-    container: &[Point],
-    part: &[Point],
-    scale: f64,
-) -> Result<Paths, GeoError> {
-    let frame = get_frame(container)?;
-    outer_nfp_paths(&frame, part, scale)
 }
 
 fn inner_nfp_core(
@@ -801,35 +790,6 @@ fn rectangle_inner_nfp(container: &[Point], part: &[Point]) -> Result<Option<Pat
             y: max_ay - max_by + b0.y,
         },
     ]))
-}
-
-fn get_frame(container: &[Point]) -> Result<Path, GeoError> {
-    let mut bounds = polygon_bounds_raw(container)?;
-    let original_width = bounds.width;
-    let original_height = bounds.height;
-    bounds.width *= 1.1;
-    bounds.height *= 1.1;
-    bounds.x -= 0.5 * (bounds.width - original_width);
-    bounds.y -= 0.5 * (bounds.height - original_height);
-
-    Ok(vec![
-        Point {
-            x: bounds.x,
-            y: bounds.y,
-        },
-        Point {
-            x: bounds.x + bounds.width,
-            y: bounds.y,
-        },
-        Point {
-            x: bounds.x + bounds.width,
-            y: bounds.y + bounds.height,
-        },
-        Point {
-            x: bounds.x,
-            y: bounds.y + bounds.height,
-        },
-    ])
 }
 
 #[wasm_bindgen]
