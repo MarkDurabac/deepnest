@@ -127,7 +127,7 @@ export function ImportPreview() {
       >
         {selectedImport && (
           <div
-            class="h-full w-full"
+            class="import-preview-canvas h-full w-full"
             dangerouslySetInnerHTML={{
               __html: selectedMarkup,
             }}

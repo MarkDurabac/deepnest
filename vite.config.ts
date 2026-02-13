@@ -25,6 +25,7 @@ const electronExternals = [
   "node:url",
   "node:child_process",
   "@deepnest/svg-preprocessor",
+  "@deepnest/svg-preprocessor-win32-x64-msvc",
   "@deepnest/calculate-nfp",
 ];
 

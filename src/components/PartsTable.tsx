@@ -29,6 +29,44 @@ interface WorkerThumbnailResult {
   svg: string;
 }
 
+interface IdleDeadlineLike {
+  didTimeout: boolean;
+  timeRemaining: () => number;
+}
+
+function scheduleIdleTask(callback: (deadline: IdleDeadlineLike) => void): number {
+  const win = window as unknown as {
+    requestIdleCallback?: (
+      cb: (deadline: IdleDeadlineLike) => void,
+      options?: { timeout?: number }
+    ) => number;
+  };
+
+  if (typeof win.requestIdleCallback === "function") {
+    return win.requestIdleCallback(callback, { timeout: 100 });
+  }
+
+  return window.setTimeout(() => {
+    callback({
+      didTimeout: true,
+      timeRemaining: () => 0,
+    });
+  }, 16);
+}
+
+function cancelIdleTask(id: number): void {
+  const win = window as unknown as {
+    cancelIdleCallback?: (handle: number) => void;
+  };
+
+  if (typeof win.cancelIdleCallback === "function") {
+    win.cancelIdleCallback(id);
+    return;
+  }
+
+  window.clearTimeout(id);
+}
+
 function getPartId(part: Part): number {
   const existing = partIdCache.get(part);
   if (existing) return existing;
@@ -81,6 +119,9 @@ export function PartsTable() {
   const sort = sortState.value;
   const workerRef = useRef<Worker | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const thumbnailQueueRef = useRef<Part[]>([]);
+  const queuedThumbnailIdsRef = useRef<Set<number>>(new Set());
+  const idleTaskRef = useRef<number | null>(null);
   const [, setThumbnailVersion] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(420);
@@ -112,6 +153,67 @@ export function PartsTable() {
     };
   }, []);
 
+  const flushThumbnailQueue = useCallback(
+    (deadline: IdleDeadlineLike) => {
+      const worker = workerRef.current;
+      let processed = 0;
+
+      while (thumbnailQueueRef.current.length > 0) {
+        if (processed > 0 && !deadline.didTimeout && deadline.timeRemaining() < 4) {
+          break;
+        }
+        if (processed >= 12) {
+          break;
+        }
+
+        const part = thumbnailQueueRef.current.shift()!;
+        const id = getPartId(part);
+        queuedThumbnailIdsRef.current.delete(id);
+
+        if (thumbnailCache.has(part) || thumbnailById.has(id) || pendingThumbnailIds.has(id)) {
+          continue;
+        }
+
+        if (!worker) {
+          const svg = buildThumbnailSync(part);
+          thumbnailById.set(id, svg);
+          thumbnailCache.set(part, svg);
+          processed++;
+          continue;
+        }
+
+        const elements = part.svgelements.map(
+          (el) => (el as Element).outerHTML ?? new XMLSerializer().serializeToString(el.cloneNode(false))
+        );
+        pendingThumbnailIds.add(id);
+        worker.postMessage({
+          id,
+          bounds: part.bounds,
+          elements,
+        });
+        processed++;
+      }
+
+      if (processed > 0) {
+        setThumbnailVersion((v) => v + 1);
+      }
+
+      if (thumbnailQueueRef.current.length > 0) {
+        idleTaskRef.current = scheduleIdleTask(flushThumbnailQueue);
+      } else {
+        idleTaskRef.current = null;
+      }
+    },
+    []
+  );
+
+  const scheduleQueueFlush = useCallback(() => {
+    if (idleTaskRef.current != null) {
+      return;
+    }
+    idleTaskRef.current = scheduleIdleTask(flushThumbnailQueue);
+  }, [flushThumbnailQueue]);
+
   const queueThumbnailGeneration = useCallback((part: Part) => {
     if (thumbnailCache.has(part)) return;
 
@@ -121,28 +223,12 @@ export function PartsTable() {
       return;
     }
 
-    if (pendingThumbnailIds.has(id)) return;
+    if (pendingThumbnailIds.has(id) || queuedThumbnailIdsRef.current.has(id)) return;
 
-    const elements = part.svgelements.map(
-      (el) => (el as Element).outerHTML ?? new XMLSerializer().serializeToString(el.cloneNode(false))
-    );
-
-    const worker = workerRef.current;
-    if (!worker) {
-      const svg = buildThumbnailSync(part);
-      thumbnailById.set(id, svg);
-      thumbnailCache.set(part, svg);
-      setThumbnailVersion((v) => v + 1);
-      return;
-    }
-
-    pendingThumbnailIds.add(id);
-    worker.postMessage({
-      id,
-      bounds: part.bounds,
-      elements,
-    });
-  }, []);
+    queuedThumbnailIdsRef.current.add(id);
+    thumbnailQueueRef.current.push(part);
+    scheduleQueueFlush();
+  }, [scheduleQueueFlush]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -193,6 +279,17 @@ export function PartsTable() {
       queueThumbnailGeneration(part);
     }
   }, [visibleParts, queueThumbnailGeneration]);
+
+  useEffect(() => {
+    return () => {
+      if (idleTaskRef.current != null) {
+        cancelIdleTask(idleTaskRef.current);
+        idleTaskRef.current = null;
+      }
+      thumbnailQueueRef.current = [];
+      queuedThumbnailIdsRef.current.clear();
+    };
+  }, []);
 
   const handleSort = useCallback(
     (field: string) => {
@@ -292,10 +389,11 @@ export function PartsTable() {
 
           {visibleParts.map((part, i) => {
             const absoluteIndex = visible.start + i;
+            const partId = getPartId(part);
             const thumb = partThumbnail(part);
             return (
             <tr
-              key={absoluteIndex}
+              key={partId}
               style={{ height: `${ROW_HEIGHT}px` }}
               onMouseDown={() => togglePart(part)}
               onMouseEnter={(e) => {

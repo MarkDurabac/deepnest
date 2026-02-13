@@ -77,7 +77,7 @@ export function NestView() {
       // Clone sheet elements
       if (dn.parts[sp.sheet]) {
         dn.parts[sp.sheet].svgelements.forEach((e) => {
-          const node = e.cloneNode(false) as SVGElement;
+          const node = e.cloneNode(true) as SVGElement;
           node.setAttribute("stroke", "#ffffff");
           node.setAttribute("fill", "none");
           node.removeAttribute("style");
@@ -109,7 +109,7 @@ export function NestView() {
         partGroup.setAttribute("id", `part${p.id}`);
 
         part.svgelements.forEach((e, index) => {
-          const node = e.cloneNode(false) as SVGElement;
+          const node = e.cloneNode(true) as SVGElement;
           if (index === 0) {
             node.setAttribute("fill", `url(#part${p.source}hatch)`);
             node.setAttribute("fill-opacity", "0.5");

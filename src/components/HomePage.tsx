@@ -8,6 +8,7 @@ import {
   isNesting,
   nests,
   parts,
+  imports,
   importBusy,
   exportBusy,
   deepNestRef,
@@ -132,6 +133,40 @@ export function HomePage() {
     touchNests();
     setAppPhase("idle");
   }, [ensureUiServices]);
+
+  const handleResetWorkspace = useCallback(() => {
+    const confirmed = confirm("Reset all imported parts and nest results?");
+    if (!confirmed) return;
+
+    const dn = deepNestRef.value;
+    if (!dn) return;
+
+    setAppPhase("busy");
+    try {
+      if (typeof dn.stop === "function") {
+        dn.stop();
+      }
+      if (typeof dn.reset === "function") {
+        dn.reset();
+      }
+
+      dn.parts = [];
+      dn.imports = [];
+      dn.nests = [];
+
+      parts.value = dn.parts;
+      imports.value = dn.imports;
+      nests.value = dn.nests;
+      isNesting.value = false;
+
+      touchParts();
+      touchImports();
+      touchNests();
+      showMessage("Workspace reset");
+    } finally {
+      setAppPhase("idle");
+    }
+  }, []);
 
   const handleExportSvg = useCallback(async () => {
     if (nests.value.length === 0) {
@@ -336,6 +371,13 @@ export function HomePage() {
         run: deleteSelectedParts,
       },
       {
+        id: "reset-workspace",
+        label: "Reset workspace",
+        keywords: ["reset", "clear", "workspace", "parts", "nests"],
+        disabled: parts.value.length === 0 && nests.value.length === 0,
+        run: handleResetWorkspace,
+      },
+      {
         id: "go-home",
         label: "Go to Home",
         keywords: ["home", "navigation"],
@@ -382,6 +424,8 @@ export function HomePage() {
       selectedParts.value.length,
       sheetParts.value.length,
       showNestView,
+      handleResetWorkspace,
+      parts.value.length,
     ]
   );
 
